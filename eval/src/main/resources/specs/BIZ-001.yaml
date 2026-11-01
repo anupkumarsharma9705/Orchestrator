@@ -1,0 +1,38 @@
+id: "BIZ-001"
+category: "BUSINESS_RULES"
+name: "E-Commerce Order Management"
+description: "E-commerce system with products, orders, inventory, discounts, shipping. Business rules: inventory decrement on order, discount codes with expiry, free shipping over $50, order states (PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED), stock reservation."
+expectedEntities:
+  - "Product"
+  - "Order"
+  - "OrderItem"
+  - "Customer"
+  - "DiscountCode"
+  - "Inventory"
+  - "ShippingAddress"
+expectedEndpoints:
+  - "GET /api/products"
+  - "GET /api/products/{id}"
+  - "POST /api/orders"
+  - "GET /api/orders/{id}"
+  - "PUT /api/orders/{id}/status"
+  - "POST /api/discounts/validate"
+  - "GET /api/inventory/{productId}"
+expectedSecurity:
+  - "JWT"
+  - "ROLE_BASED"
+expectedTests:
+  - "UNIT"
+  - "INTEGRATION"
+  - "CONTRACT"
+  - "BUSINESS_RULE"
+fixedAnswers: |
+  [
+    {"id": "q1", "answer": "PostgreSQL"},
+    {"id": "q2", "answer": "Yes, JWT with CUSTOMER/ADMIN roles"},
+    {"id": "q3", "answer": "Yes, Bean Validation + custom business rule validators"},
+    {"id": "q4", "answer": "Yes, filter orders by status, date range"},
+    {"id": "q5", "answer": "Order states with transitions, inventory decrement on confirm, discount validation, free shipping > $50"}
+  ]
+timeoutSec: 500
+createdAt: "2026-10-28T00:00:00Z"

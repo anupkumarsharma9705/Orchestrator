@@ -1,0 +1,31 @@
+id: "CRUD-002"
+category: "CRUD"
+name: "Todo List with User"
+description: "REST CRUD for Todo entity with user ownership, due dates, categories, completion status"
+expectedEntities:
+  - "Todo"
+  - "User"
+  - "Category"
+expectedEndpoints:
+  - "GET /api/todos"
+  - "GET /api/todos/{id}"
+  - "POST /api/todos"
+  - "PUT /api/todos/{id}"
+  - "DELETE /api/todos/{id}"
+  - "GET /api/users/{id}/todos"
+expectedSecurity:
+  - "JWT"
+  - "RESOURCE_OWNERSHIP"
+expectedTests:
+  - "UNIT"
+  - "INTEGRATION"
+fixedAnswers: |
+  [
+    {"id": "q1", "answer": "PostgreSQL"},
+    {"id": "q2", "answer": "Yes, JWT with user ownership"},
+    {"id": "q3", "answer": "Yes, Bean Validation with custom validators"},
+    {"id": "q4", "answer": "Yes, filter by status, category, due date"},
+    {"id": "q5", "answer": "Category as separate entity, User as principal"}
+  ]
+timeoutSec: 300
+createdAt: "2026-10-28T00:00:00Z"

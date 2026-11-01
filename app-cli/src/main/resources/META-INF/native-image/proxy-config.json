@@ -1,0 +1,18 @@
+[
+  {
+    "pattern": "org.springframework.boot.autoconfigure.*",
+    "type": "all"
+  },
+  {
+    "pattern": "org.springframework.boot.context.properties.*",
+    "type": "all"
+  },
+  {
+    "pattern": "com.example.orchestrator.cli.*",
+    "type": "all"
+  },
+  {
+    "pattern": "com.example.orchestrator.model.*",
+    "type": "all"
+  }
+]

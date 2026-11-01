@@ -1,0 +1,7 @@
+com.example.orchestrator.cli.CompanionCli
+com.example.orchestrator.cli.commands.GenerateCommand
+com.example.orchestrator.cli.commands.VerifyCommand
+com.example.orchestrator.cli.commands.DoctorCommand
+com.example.orchestrator.cli.commands.ProjectCommand
+com.example.orchestrator.cli.commands.TaskCommand
+com.example.orchestrator.cli.commands.ConfigCommand

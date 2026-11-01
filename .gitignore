@@ -1,0 +1,101 @@
+# Build artifacts
+target/
+*.jar
+*.war
+*.ear
+*.class
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.eclipse/
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Gradle
+.gradle/
+gradlew
+gradlew.bat
+
+# Secrets - never commit
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.env
+.env.*
+!.env.example
+secrets/
+*.secret
+
+# Docker
+docker-compose.override.yml
+
+# Test artifacts
+test-results/
+jacoco.exec
+coverage/
+
+# Local config
+*.local.yml
+*.local.properties
+application-local.yml
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+
+# IntelliJ
+*.ipr
+*.iws
+*.iml
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
+# Ansible
+*.vault
+
+# Packer
+*.box
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Build
+dist/
+build/
+out/

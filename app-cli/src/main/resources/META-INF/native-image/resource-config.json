@@ -1,0 +1,16 @@
+{
+  "resources": [
+    {
+      "pattern": "application.yml",
+      "prefixes": ["src/main/resources/"]
+    },
+    {
+      "pattern": "application-*.yml",
+      "prefixes": ["src/main/resources/"]
+    },
+    {
+      "pattern": "META-INF/native-image/**",
+      "prefixes": ["src/main/resources/"]
+    }
+  ]
+}

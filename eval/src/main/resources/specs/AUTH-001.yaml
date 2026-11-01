@@ -1,0 +1,38 @@
+id: "AUTH-001"
+category: "AUTH_RELATIONS"
+name: "Blog with Users, Posts, Comments"
+description: "Blog platform with users, posts, comments, tags, likes. Users can create posts, comment on posts, like posts. Posts have tags. Comments are nested."
+expectedEntities:
+  - "User"
+  - "Post"
+  - "Comment"
+  - "Tag"
+  - "Like"
+expectedEndpoints:
+  - "GET /api/posts"
+  - "GET /api/posts/{id}"
+  - "POST /api/posts"
+  - "PUT /api/posts/{id}"
+  - "DELETE /api/posts/{id}"
+  - "POST /api/posts/{id}/comments"
+  - "POST /api/posts/{id}/likes"
+  - "GET /api/users/{id}/posts"
+  - "GET /api/tags/{name}/posts"
+expectedSecurity:
+  - "JWT"
+  - "ROLE_BASED"
+  - "RESOURCE_OWNERSHIP"
+expectedTests:
+  - "UNIT"
+  - "INTEGRATION"
+  - "CONTRACT"
+fixedAnswers: |
+  [
+    {"id": "q1", "answer": "PostgreSQL"},
+    {"id": "q2", "answer": "Yes, JWT with USER/ADMIN roles"},
+    {"id": "q3", "answer": "Yes, Bean Validation"},
+    {"id": "q4", "answer": "Yes, pagination on posts and comments"},
+    {"id": "q5", "answer": "Comment nested under Post, Tag many-to-many with Post, Like many-to-one User-Post"}
+  ]
+timeoutSec: 400
+createdAt: "2026-10-28T00:00:00Z"

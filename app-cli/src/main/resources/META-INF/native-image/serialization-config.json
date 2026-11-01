@@ -1,0 +1,16 @@
+[
+  "com.example.orchestrator.cli.config.CliConfig",
+  "com.example.orchestrator.cli.client.OrchestratorClient$ProjectRequest",
+  "com.example.orchestrator.cli.client.OrchestratorClient$ProjectResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$CreateTaskRequest",
+  "com.example.orchestrator.cli.client.OrchestratorClient$TaskResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$TaskListResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$ApprovalResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$ArtifactsResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$Artifact",
+  "com.example.orchestrator.cli.client.OrchestratorClient$LogsResponse",
+  "com.example.orchestrator.cli.client.OrchestratorClient$HealthResponse",
+  "com.example.orchestrator.model.Task",
+  "com.example.orchestrator.model.Project",
+  "com.example.orchestrator.model.Requirement"
+]

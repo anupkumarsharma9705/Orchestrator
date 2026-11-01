@@ -1,0 +1,31 @@
+id: "CRUD-001"
+category: "CRUD"
+name: "Simple Book CRUD"
+description: "REST CRUD for Book entity with author, genre, ISBN, pagination, validation"
+expectedEntities:
+  - "Book"
+  - "Author"
+  - "Genre"
+expectedEndpoints:
+  - "GET /api/books"
+  - "GET /api/books/{id}"
+  - "POST /api/books"
+  - "PUT /api/books/{id}"
+  - "DELETE /api/books/{id}"
+expectedSecurity:
+  - "JWT"
+  - "ROLE_BASED"
+expectedTests:
+  - "UNIT"
+  - "INTEGRATION"
+  - "CONTRACT"
+fixedAnswers: |
+  [
+    {"id": "q1", "answer": "PostgreSQL"},
+    {"id": "q2", "answer": "Yes, JWT with roles"},
+    {"id": "q3", "answer": "Yes, Bean Validation"},
+    {"id": "q4", "answer": "Yes, pagination and sorting"},
+    {"id": "q5", "answer": "Author, Genre as separate entities"}
+  ]
+timeoutSec: 300
+createdAt: "2026-10-28T00:00:00Z"

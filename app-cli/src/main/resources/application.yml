@@ -1,0 +1,60 @@
+# Companion CLI Default Configuration
+# Override with ~/.companion/config.yaml or command-line options
+
+companion:
+  # Orchestrator server URL (REST API)
+  server-url: https://localhost:8443
+
+  # SSL/TLS Configuration
+  ssl:
+    enabled: true
+    trust-store: classpath:certs/truststore.p12
+    trust-store-password: ${SSL_TRUST_STORE_PASSWORD:changeit}
+    trust-store-type: PKCS12
+    verify-hostname: false  # Set to true in production with valid certs
+
+  # Default project name (used when not specified)
+  default-project: ""
+
+  # Output format: table, json, markdown
+  output-format: table
+
+  # Default timeout for long-running operations (seconds)
+  timeout-seconds: 600
+
+  # API key for authentication (optional, for future use)
+  api-key: ""
+
+  # Log level: DEBUG, INFO, WARN, ERROR
+  log-level: INFO
+
+  # Disable colored output
+  no-color: false
+
+  # Connection settings
+  connection:
+    # Connect timeout (seconds)
+    connect-timeout: 10
+    # Read timeout (seconds)
+    read-timeout: 600
+    # Retry attempts for failed requests
+    retry-attempts: 3
+    # Retry delay (seconds)
+    retry-delay: 2
+
+# Spring Boot configuration
+spring:
+  application:
+    name: companion-cli
+  main:
+    banner-mode: off
+    web-application-type: none
+
+# Logging configuration
+logging:
+  level:
+    com.example.orchestrator: INFO
+    org.springframework: WARN
+    reactor: WARN
+  pattern:
+    console: "%clr(%d{HH:mm:ss}){faint} %clr(%-5level) %clr(${PID}){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"

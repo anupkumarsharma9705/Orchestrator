@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- Suppress false positives for generated code -->
+    <Match>
+        <Class name="~.*\.Generated"/>
+    </Match>
+
+    <!-- Suppress Lombok-generated code issues -->
+    <Match>
+        <Class name="~.*\$Builder"/>
+    </Match>
+    <Match>
+        <Class name="~.*\$Value"/>
+    </Match>
+
+    <!-- Suppress DTO/Record serialization issues -->
+    <Match>
+        <Bug pattern="SE_BAD_FIELD"/>
+        <Class name="~.*\.dto\..*"/>
+    </Match>
+    <Match>
+        <Bug pattern="SE_NO_SERIALVERSIONID"/>
+        <Class name="~.*\.dto\..*"/>
+    </Match>
+
+    <!-- Suppress JPA entity issues -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="~.*\.domain\..*"/>
+    </Match>
+    <Match>
+        <Bug pattern="SE_NO_SERIALVERSIONID"/>
+        <Class name="~.*\.domain\..*"/>
+    </Match>
+
+    <!-- Suppress MapStruct mapper issues -->
+    <Match>
+        <Bug pattern="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"/>
+        <Class name="~.*\.mapper\..*"/>
+    </Match>
+
+    <!-- Suppress test code issues -->
+    <Match>
+        <Class name="~.*Test"/>
+        <Bug pattern="DMI_.*"/>
+    </Match>
+    <Match>
+        <Class name="~.*Test"/>
+        <Bug pattern="RV_.*"/>
+    </Match>
+
+    <!-- Allow secure random in tests -->
+    <Match>
+        <Class name="~.*Test"/>
+        <Bug pattern="DMI_RANDOM_USED_ONLY_ONCE"/>
+    </Match>
+
+    <!-- Suppress serialization in configuration classes -->
+    <Match>
+        <Bug pattern="SE_NO_SERIALVERSIONID"/>
+        <Class name="~.*\.config\..*"/>
+    </Match>
+
+    <!-- Suppress security manager issues in Spring Boot -->
+    <Match>
+        <Bug pattern="DM_DEFAULT_ENCODING"/>
+    </Match>
+</FindBugsFilter>
