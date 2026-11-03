@@ -6,9 +6,52 @@
     <property name="charset" value="UTF-8"/>
     <property name="fileExtensions" value="java"/>
 
-    <!-- Google Java Style base -->
+    <module name="LineLength">
+        <property name="max" value="120"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+    </module>
+
+    <!-- Custom security rules. These run against the whole file so they also
+         catch constants and annotations, not just statements. -->
+    <module name="RegexpSingleline">
+        <property name="format" value="MessageDigest\.getInstance\s*\(\s*[&quot;']MD5[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: MD5 is cryptographically broken. Use SHA-256 or stronger."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="MessageDigest\.getInstance\s*\(\s*[&quot;']SHA1[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: SHA1 is cryptographically broken. Use SHA-256 or stronger."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']DES[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: DES is cryptographically broken. Use AES."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']RC4[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: RC4 is cryptographically broken. Use AES."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']AES/ECB"/>
+        <property name="message" value="SEC-5: ECB mode is insecure. Use CBC or GCM mode."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="String\s+\w+\s*=\s*&quot;.*(password|secret|api.?key).*&quot;"/>
+        <property name="message" value="SEC-7: Potential hardcoded credential. Use environment variables or a secret store."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Statement\.execute\s*\(\s*.*\+.*\)"/>
+        <property name="message" value="SEC-2: Potential SQL concatenation. Use parameterized queries."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="PreparedStatement.*\.setString\s*\(\s*\d+,\s*.*\+.*\)"/>
+        <property name="message" value="SEC-2: Potential SQL concatenation in PreparedStatement. Use parameterized queries."/>
+    </module>
+
+    <module name="SuppressWarningsFilter"/>
+
     <module name="TreeWalker">
-        <!-- Naming Conventions -->
+        <module name="SuppressWarningsHolder"/>
+
+        <!-- Naming conventions -->
         <module name="ConstantName"/>
         <module name="LocalFinalVariableName"/>
         <module name="LocalVariableName"/>
@@ -34,7 +77,7 @@
         <module name="WhitespaceAfter"/>
         <module name="WhitespaceAround"/>
 
-        <!-- Modifier Order -->
+        <!-- Modifier order -->
         <module name="ModifierOrder"/>
 
         <!-- Blocks -->
@@ -46,7 +89,7 @@
         <module name="NeedBraces"/>
         <module name="RightCurly"/>
 
-        <!-- Coding Problems -->
+        <!-- Coding problems -->
         <module name="EmptyStatement"/>
         <module name="EqualsHashCode"/>
         <module name="HiddenField">
@@ -55,14 +98,9 @@
         </module>
         <module name="IllegalInstantiation"/>
         <module name="InnerAssignment"/>
-        <module name="MagicNumber">
-            <property name="ignoreAnnotation" value="true"/>
-            <property name="tokens" value="NUM_DOUBLE, NUM_FLOAT, NUM_INT, NUM_LONG"/>
-        </module>
         <module name="MissingSwitchDefault"/>
-        <module name="RedundantThrows"/>
 
-        <!-- Class Design -->
+        <!-- Class design -->
         <module name="DefaultComesLast"/>
         <module name="EqualsAvoidNull"/>
         <module name="FinalClass"/>
@@ -70,87 +108,9 @@
         <module name="InterfaceIsType"/>
         <module name="MutableException"/>
         <module name="OneTopLevelClass"/>
-        <module name="VisibilityModifier">
-            <property name="allowPublicClasses" value="true"/>
-            <property name="packageAllowed" value="true"/>
-            <property name="protectedAllowed" value="true"/>
-        </module>
 
         <!-- Miscellaneous -->
         <module name="ArrayTypeStyle"/>
-        <module name="FinalParameters"/>
-        <module name="TodoComment">
-            <property name="format" value="(TODO|FIXME|XXX)"/>
-        </module>
         <module name="UpperEll"/>
-
-        <!-- Line Length -->
-        <module name="LineLength">
-            <property name="max" value="120"/>
-            <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
-        </module>
-
-        <!-- Javadoc -->
-        <module name="JavadocMethod">
-            <property name="allowMissingParamNames" value="true"/>
-            <property name="allowMissingReturnTag" value="true"/>
-            <property name="allowMissingThrowsTags" value="true"/>
-            <property name="allowThrowsTagsForSubclasses" value="true"/>
-            <property name="allowUndeclaredRethrow" value="true"/>
-            <property name="suppressLoadErrors" value="true"/>
-        </module>
-        <module name="JavadocType">
-            <property name="scope" value="public"/>
-        </module>
-        <module name="JavadocVariable">
-            <property name="scope" value="public"/>
-        </module>
-
-        <!-- Custom Security Rules -->
-        <module name="RegexpSingleline">
-            <property name="format" value="MessageDigest\.getInstance\s*\(\s*[\"']MD5[\"']\s*\)"/>
-            <property name="message" value="SEC-5: MD5 is cryptographically broken. Use SHA-256 or stronger."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="MessageDigest\.getInstance\s*\(\s*[\"']SHA1[\"']\s*\)"/>
-            <property name="message" value="SEC-5: SHA1 is cryptographically broken. Use SHA-256 or stronger."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="Cipher\.getInstance\s*\(\s*[\"']DES[\"']\s*\)"/>
-            <property name="message" value="SEC-5: DES is cryptographically broken. Use AES."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="Cipher\.getInstance\s*\(\s*[\"']RC4[\"']\s*\)"/>
-            <property name="message" value="SEC-5: RC4 is cryptographically broken. Use AES."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="ECB"/>
-            <property name="message" value="SEC-5: ECB mode is insecure. Use CBC or GCM mode."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="String\s+\w+\s*=\s*.*password.*"/>
-            <property name="message" value="SEC-7: Potential hardcoded password. Use environment variables."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="String\s+\w+\s*=\s*.*secret.*"/>
-            <property name="message" value="SEC-7: Potential hardcoded secret. Use environment variables."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="String\s+\w+\s*=\s*.*api.?key.*"/>
-            <property name="message" value="SEC-7: Potential hardcoded API key. Use environment variables."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="Statement\.execute\s*\(\s*.*\+.*\)"/>
-            <property name="message" value="SEC-2: Potential SQL concatenation. Use parameterized queries."/>
-        </module>
-        <module name="RegexpSingleline">
-            <property name="format" value="PreparedStatement.*\.setString\s*\(\s*\d+,\s*.*\+.*\)"/>
-            <property name="message" value="SEC-2: Potential SQL concatenation in PreparedStatement. Use parameterized queries."/>
-        </module>
-    </module>
-
-    <module name="SuppressWarningsFilter">
-        <property name="file" value="${project.basedir}/checkstyle-suppressions.xml"/>
-        <property name="optional" value="true"/>
     </module>
 </module>

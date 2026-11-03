@@ -11,8 +11,10 @@ import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.StreamType;
-import com.github.dockerjava.core.DockerClientBuilder;
+import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
+import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
+import com.github.dockerjava.transport.DockerHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -69,31 +71,59 @@ public class SandboxService {
 
     @PostConstruct
     public void init() {
+        // Invalid security configuration must always prevent startup.
+        config.validateConfiguration();
+
         try {
-            // Validate all configuration at startup
-            config.validateConfiguration();
-            
-            // Ensure allowed workspace base exists
             Files.createDirectories(ALLOWED_WORKSPACE_BASE);
-            
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to create sandbox workspace base", e);
+        }
+
+        DockerClient client;
+        try {
             // Validate Docker host before connecting
             config.validateDockerHost(config.getDockerHost());
-            
+
             DefaultDockerClientConfig dockerConfig = DefaultDockerClientConfig.createDefaultConfigBuilder()
                 .withDockerHost(config.getDockerHost())
                 .build();
-            dockerClient = DockerClientBuilder.getInstance(dockerConfig).build();
-            
-            // Test connection
-            dockerClient.pingCmd().exec();
-            log.info("Docker client initialized successfully");
-            log.info("Sandbox security: image validation enabled, socket isolation enabled, capabilities dropped");
-            
-            // Ensure Maven cache volume exists
-            ensureMavenCacheVolume();
-            
+            DockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()
+                .dockerHost(dockerConfig.getDockerHost())
+                .sslConfig(dockerConfig.getSSLConfig())
+                .build();
+            client = DockerClientImpl.getInstance(dockerConfig, httpClient);
         } catch (Exception e) {
             log.error("Failed to initialize Docker client: {}", e.getMessage(), e);
+            throw new IllegalStateException("Failed to initialize SandboxService", e);
+        }
+
+        // A missing Docker daemon is a degraded mode, not a fatal startup error:
+        // the API can still serve health/version/task endpoints. Every sandbox
+        // operation fails closed while dockerClient is null.
+        try {
+            client.pingCmd().exec();
+        } catch (Exception e) {
+            log.warn("Docker daemon is not reachable at {}. Starting in degraded mode; "
+                    + "sandbox operations will fail until Docker is available: {}",
+                    config.getDockerHost(), e.getMessage());
+            try {
+                client.close();
+            } catch (IOException ignored) {
+                // Nothing to clean up when the daemon was never reachable.
+            }
+            return;
+        }
+
+        dockerClient = client;
+        log.info("Docker client initialized successfully");
+        log.info("Sandbox security: image validation enabled, socket isolation enabled, capabilities dropped");
+
+        try {
+            // Ensure Maven cache volume exists
+            ensureMavenCacheVolume();
+        } catch (Exception e) {
+            log.error("Failed to prepare Maven cache volume: {}", e.getMessage(), e);
             throw new IllegalStateException("Failed to initialize SandboxService", e);
         }
     }
@@ -179,6 +209,11 @@ public class SandboxService {
     ) {}
 
     public HealthCheckResult healthCheck() {
+        if (dockerClient == null) {
+            return new HealthCheckResult(false,
+                "Sandbox unavailable: Docker daemon is not reachable",
+                Instant.now());
+        }
         try {
             // Check Docker daemon connectivity
             dockerClient.pingCmd().exec();

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -46,7 +46,7 @@ class CliIntegrationTest {
     @Autowired
     private ConfigManager configManager;
 
-    @MockBean
+    @MockitoBean
     private TemplateEngine templateEngine;
 
     @TempDir
@@ -56,10 +56,13 @@ class CliIntegrationTest {
     private final ByteArrayOutputStream errorStream = new ByteArrayOutputStream();
     private final PrintStream originalOut = System.out;
     private final PrintStream originalErr = System.err;
+    private final String originalUserHome = System.getProperty("user.home");
 
     @BeforeEach
     void setUp(@TempDir Path tempDir) {
         this.tempDir = tempDir;
+        // Never read or overwrite the developer's real ~/.companion/config.yaml.
+        System.setProperty("user.home", tempDir.toString());
         this.commandLine = new CommandLine(new CompanionCli());
         CliConfig config = CliConfig.defaults();
         configManager.save(config);
@@ -72,6 +75,7 @@ class CliIntegrationTest {
     void tearDown() {
         System.setOut(originalOut);
         System.setErr(originalErr);
+        System.setProperty("user.home", originalUserHome);
     }
 
     private String getOutput() {
@@ -101,7 +105,7 @@ class CliIntegrationTest {
         assertThat(output).contains("Orchestrator Server");
         assertThat(output).contains("Workspace writable");
         assertThat(output).contains("Disk space");
-        assertThat(output).contains("Port 8080");
+        assertThat(output).contains("Port 8443");
         assertThat(output).contains("JVM Heap");
     }
 
@@ -264,7 +268,7 @@ class CliIntegrationTest {
         int exitCode = commandLine.execute("generate");
         
         assertThat(exitCode).isNotEqualTo(0);
-        assertThat(getError()).contains("Missing required options");
+        assertThat(getError()).contains("Missing required option");
     }
 
     @Test
@@ -283,6 +287,17 @@ class CliIntegrationTest {
         
         // Exit code 2 = usage error (missing description), but not a crash
         assertThat(exitCode).isIn(0, 1, 2);
+    }
+
+    @Test
+    void testGenerateCommand_OfflineDryRun_DoesNotRequireServerConfig() {
+        resetStreams();
+        int exitCode = commandLine.execute(
+                "generate", "REST CRUD for Book", "--name", "library",
+                "--offline", "--dry-run", "--project-root", tempDir.toString());
+
+        assertThat(exitCode).isEqualTo(0);
+        assertThat(getOutput()).contains("DRY RUN");
     }
 
     @Test

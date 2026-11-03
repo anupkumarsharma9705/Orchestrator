@@ -1,0 +1,16 @@
+[
+  {
+    "className": "java.nio.file.Path",
+    "methods": [
+      { "name": "toString", "parameterTypes": [] },
+      { "name": "toAbsolutePath", "parameterTypes": [] },
+      { "name": "normalize", "parameterTypes": [] }
+    ]
+  },
+  {
+    "className": "java.nio.file.Paths",
+    "methods": [
+      { "name": "get", "parameterTypes": ["java.lang.String", "[Ljava.lang.String;"] }
+    ]
+  }
+]

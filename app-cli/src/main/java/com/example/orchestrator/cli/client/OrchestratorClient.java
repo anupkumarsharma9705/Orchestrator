@@ -3,6 +3,8 @@ package com.example.orchestrator.cli.client;
 import com.example.orchestrator.cli.config.CliConfig;
 import com.example.orchestrator.cli.config.ConfigManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -11,7 +13,9 @@ import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 import reactor.util.retry.Retry;
 
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
@@ -26,11 +30,10 @@ import javax.net.ssl.TrustManagerFactory;
 import io.netty.channel.ConnectTimeoutException;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.resolver.dns.DnsNameResolverException;
 
 /**
- * Type-safe HTTP client to orchestrator REST API.
+ * Type-safe HTTP client to orchestrator REST API with API version negotiation.
  * Uses Spring WebFlux WebClient with retry, timeout, and error mapping.
  * 
  * Security: Configures request/response size limits (H-07)
@@ -39,9 +42,16 @@ import io.netty.resolver.dns.DnsNameResolverException;
  * - Max initial line length: 8KB
  * 
  * Error Handling (HV-08): Maps raw connection exceptions to user-friendly messages
+ * 
+ * API Version Negotiation:
+ * - Negotiates API version at startup via /version endpoint
+ * - Validates compatibility with server
+ * - Provides graceful degradation for version mismatches
  */
 public class OrchestratorClient {
 
+    private static final Logger log = LoggerFactory.getLogger(OrchestratorClient.class);
+    
     private static final int MAX_INBOUND_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB
     private static final int MAX_INBOUND_HEADER_SIZE = 64 * 1024; // 64KB
     private static final int MAX_INITIAL_LINE_LENGTH = 8 * 1024; // 8KB
@@ -49,6 +59,7 @@ public class OrchestratorClient {
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final CliConfig config;
+    private final ApiVersion apiVersion;
 
     public OrchestratorClient(CliConfig config) {
         this.config = config;
@@ -64,11 +75,6 @@ public class OrchestratorClient {
 
         // Create HTTP client with SSL and SIZE LIMITS (H-07)
         HttpClient httpClient = HttpClient.create()
-            .secure(ssl -> {
-                if (config.ssl() != null && config.ssl().enabled()) {
-                    ssl.sslContext(sslContext);
-                }
-            })
             // Size limits to prevent OOM from large responses
             .httpResponseDecoder(spec -> {
                 spec.maxHeaderSize(MAX_INBOUND_HEADER_SIZE);
@@ -81,6 +87,10 @@ public class OrchestratorClient {
             // Keep alive
             .keepAlive(true);
 
+        if (sslContext != null) {
+            httpClient = httpClient.secure(spec -> spec.sslContext(sslContext));
+        }
+
         this.webClient = WebClient.builder()
             .baseUrl(baseUrl + "api/")
             .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
@@ -90,33 +100,31 @@ public class OrchestratorClient {
             // WebClient-level size limit (additional defense)
             .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(MAX_INBOUND_MESSAGE_SIZE))
             .build();
+
+        // Negotiate API version at startup
+        this.apiVersion = negotiateApiVersion();
     }
 
     private SslContext createSslContext(CliConfig config) {
-        if (config.ssl() == null || !config.ssl().enabled()) {
+        CliConfig.SslConfig sslConfig = config.ssl();
+        if (sslConfig == null || Boolean.FALSE.equals(sslConfig.enabled())) {
             return null;
         }
 
         try {
-            String trustStorePath = config.ssl().trustStore();
-            String password = config.ssl().trustStorePassword();
-            String type = config.ssl().trustStoreType();
+            String trustStorePath = requireValue(sslConfig.trustStore(), "ssl.trustStore");
+            String password = requireValue(sslConfig.trustStorePassword(), "ssl.trustStorePassword");
+            String type = requireValue(sslConfig.trustStoreType(), "ssl.trustStoreType");
 
-            // Load trust store from classpath or file system
-            InputStream trustStoreStream;
-            if (trustStorePath.startsWith("classpath:")) {
-                String classpathPath = trustStorePath.substring("classpath:".length());
-                trustStoreStream = getClass().getClassLoader().getResourceAsStream(classpathPath);
-                if (trustStoreStream == null) {
-                    throw new IllegalStateException("Trust store not found on classpath: " + classpathPath);
-                }
-            } else {
-                trustStoreStream = new java.io.FileInputStream(trustStorePath);
+            if (Boolean.FALSE.equals(sslConfig.verifyHostname())) {
+                // Certificate validation must never be silently weakened. Generated
+                // development certificates include localhost SANs, so this is safe.
+                log.warn("ssl.verifyHostname=false is ignored: certificate hostname verification is always enforced");
             }
 
             KeyStore trustStore = KeyStore.getInstance(type);
-            try (InputStream is = trustStoreStream) {
-                trustStore.load(is, config.ssl().trustStorePassword().toCharArray());
+            try (InputStream is = openResource(trustStorePath, "Trust store")) {
+                trustStore.load(is, password.toCharArray());
             }
 
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
@@ -125,17 +133,110 @@ public class OrchestratorClient {
             SslContextBuilder sslContextBuilder = SslContextBuilder.forClient()
                 .trustManager(tmf);
 
-            // Disable hostname verification for self-signed dev certs
-            if (Boolean.FALSE.equals(config.ssl().verifyHostname())) {
-                sslContextBuilder.trustManager(InsecureTrustManagerFactory.INSTANCE);
+            // mTLS: Configure client certificate if mTLS is enabled
+            if (Boolean.TRUE.equals(sslConfig.mtlsEnabled())) {
+                String keyStorePath = requireValue(sslConfig.keyStore(), "ssl.keyStore");
+                String keyStorePassword = requireValue(sslConfig.keyStorePassword(), "ssl.keyStorePassword");
+                String keyStoreType = requireValue(sslConfig.keyStoreType(), "ssl.keyStoreType");
+
+                KeyStore keyStore = KeyStore.getInstance(keyStoreType);
+                try (InputStream is = openResource(keyStorePath, "Client key store")) {
+                    keyStore.load(is, keyStorePassword.toCharArray());
+                }
+
+                // Build key manager for client authentication
+                KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+                kmf.init(keyStore, keyStorePassword.toCharArray());
+                sslContextBuilder.keyManager(kmf);
+
+                log.info("mTLS client certificate configured: alias={}",
+                        sslConfig.keyAlias() != null && !sslConfig.keyAlias().isBlank()
+                                ? sslConfig.keyAlias() : "default");
             }
 
             return sslContextBuilder.build();
 
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to create SSL context: " + e.getMessage(), e);
         }
     }
+
+    private String requireValue(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException(name + " is not configured. "
+                    + "Run 'scripts/dev-up' to generate development certificates and configuration, "
+                    + "or set it in ~/.companion/config.yaml.");
+        }
+        return value;
+    }
+
+    private InputStream openResource(String path, String description) throws IOException {
+        if (path.startsWith("classpath:")) {
+            String classpathPath = path.substring("classpath:".length());
+            InputStream stream = getClass().getClassLoader().getResourceAsStream(classpathPath);
+            if (stream == null) {
+                throw new IllegalStateException(description + " not found on classpath: " + classpathPath
+                        + ". Run 'scripts/dev-up' to generate development certificates.");
+            }
+            return stream;
+        }
+
+        java.nio.file.Path file;
+        if (path.startsWith("file:")) {
+            file = java.nio.file.Paths.get(java.net.URI.create(path));
+        } else {
+            file = java.nio.file.Paths.get(path);
+        }
+
+        if (!java.nio.file.Files.isRegularFile(file)) {
+            throw new IllegalStateException(description + " not found: " + file.toAbsolutePath());
+        }
+        return java.nio.file.Files.newInputStream(file);
+    }
+
+    /**
+     * Negotiates API version with the server at startup.
+     * Returns version info including compatibility status.
+     */
+    private ApiVersion negotiateApiVersion() {
+        try {
+            VersionResponse version = webClient.get()
+                .uri("version")
+                .retrieve()
+                .bodyToMono(VersionResponse.class)
+                .timeout(Duration.ofSeconds(10))
+                .onErrorResume(e -> Mono.just(new VersionResponse("unknown", "unknown", "unknown", 0)))
+                .block();
+
+            String serverVersion = version != null ? version.apiVersion() : "0.0.0";
+            return new ApiVersion(supportedApiVersion(), serverVersion, isCompatible(serverVersion));
+        } catch (Exception e) {
+            return new ApiVersion(supportedApiVersion(), "unknown", false);
+        }
+    }
+
+    private String supportedApiVersion() {
+        return "1.0";
+    }
+
+    private boolean isCompatible(String serverVersion) {
+        try {
+            String[] clientParts = supportedApiVersion().split("\\.");
+            String[] serverParts = serverVersion.split("\\.");
+            
+            int clientMajor = Integer.parseInt(clientParts[0]);
+            int serverMajor = Integer.parseInt(serverParts[0]);
+            
+            // Major version must match
+            return clientMajor == serverMajor;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // ===== Public API =====
 
     /**
      * Register a new project.
@@ -451,6 +552,9 @@ public class OrchestratorClient {
             return "UP".equalsIgnoreCase(status) || "UP".equalsIgnoreCase(components != null ? (String) components.get("status") : null);
         }
     }
+
+    public record VersionResponse(String apiVersion, String buildVersion, String buildTime, long buildTimestamp) {}
+    public record ApiVersion(String clientVersion, String serverVersion, boolean compatible) {}
 
     // ===== Exception Classes =====
 

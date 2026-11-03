@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Build and verify
+        run: mvn -B -ntp clean verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: ignore
+          retention-days: 7
+
+  generated-project:
+    name: Generate offline and verify generated project
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Build CLI
+        run: mvn -B -ntp -pl app-cli -am package -DskipTests
+
+      - name: Generate project without server or LLM
+        run: |
+          set -euo pipefail
+          GEN_ROOT="$RUNNER_TEMP/companion-generation"
+          rm -rf "$GEN_ROOT"
+          mkdir -p "$GEN_ROOT/home"
+          java -Duser.home="$GEN_ROOT/home" \
+            -jar app-cli/target/app-cli-0.0.1-SNAPSHOT-exec.jar \
+            --no-color generate \
+            "REST CRUD for Book entity with author, genre, ISBN, pagination, validation" \
+            --name library --offline --project-root "$GEN_ROOT"
+          test -f "$GEN_ROOT/library/pom.xml"
+
+      - name: Assert generated defaults
+        run: |
+          set -euo pipefail
+          GEN_ROOT="$RUNNER_TEMP/companion-generation/library"
+          grep -q '<version>4.1.1</version>' "$GEN_ROOT/pom.xml"
+          grep -q 'spring-boot-flyway' "$GEN_ROOT/pom.xml"
+          ! grep -q 'write-dates-as-timestamps' "$GEN_ROOT/src/main/resources/application.yml"
+          test -f "$GEN_ROOT/src/main/java/com/example/library/config/SecurityConfig.java"
+
+      - name: Verify generated project
+        working-directory: ${{ runner.temp }}/companion-generation/library
+        run: mvn -B -ntp verify
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml

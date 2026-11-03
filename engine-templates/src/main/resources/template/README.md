@@ -25,39 +25,35 @@
 ### Using Docker Compose (Recommended)
 
 ```bash
-# Set required environment variables
-export JWT_SECRET="your-super-secret-key-at-least-32-chars"
-export JWT_ISSUER="your-app"
+# Set the required JWT signing secret (at least 32 bytes)
+export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
 
-# Start all services
-docker-compose up -d
+# Start PostgreSQL and the application
+docker compose up -d
 
 # View logs
-docker-compose logs -f {{serviceName}}
+docker compose logs -f {{serviceName}}
 ```
 
 ### Local Development
 
 ```bash
 # Start PostgreSQL only
-docker-compose up -d postgres
+docker compose up -d postgres
+
+# JWT_SECRET is required (at least 32 bytes)
+export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
+export DB_PASSWORD="postgres"
 
 # Run application
-./mvnw spring-boot:run
+mvn spring-boot:run
 ```
-
-## API Documentation
-
-Once running, access Swagger UI at:
-- http://localhost:8080/swagger-ui.html
-- http://localhost:8080/v3/api-docs
 
 ## Actuator Endpoints
 
 - Health: `GET /actuator/health`
 - Info: `GET /actuator/info`
 - Metrics: `GET /actuator/metrics`
-- Prometheus: `GET /actuator/prometheus`
 
 ## Project Structure
 
@@ -66,6 +62,7 @@ src/
 ├── main/
 │   ├── java/
 │   │   └── com/example/{{projectName}}/
+│   │       ├── {{className}}Application.java
 │   │       ├── config/
 │   │       ├── controller/
 │   │       ├── domain/
@@ -76,8 +73,7 @@ src/
 │   │       ├── security/
 │   │       └── service/
 │   └── resources/
-│       ├── application.yml
-│       └── db/migration/
+│       └── application.yml
 └── test/
     └── java/
         └── com/example/{{projectName}}/
@@ -86,14 +82,14 @@ src/
 ## Building
 
 ```bash
-# Run all checks (compile, test, quality gates)
-./mvnw verify
+# Run all checks (compile, test, Checkstyle, SpotBugs)
+mvn verify
 
 # Skip tests
-./mvnw clean package -DskipTests
+mvn clean package -DskipTests
 
 # Build Docker image
-./mvnw dockerfile:build -Pdocker
+mvn dockerfile:build -Pdocker
 ```
 
 ## Quality Gates
@@ -101,69 +97,74 @@ src/
 This project enforces:
 - **Checkstyle**: Google Java Style + custom rules
 - **SpotBugs + FindSecBugs**: Static analysis, security patterns
-- **JaCoCo**: 80% line coverage, 70% branch coverage
-- **OWASP Dependency-Check**: CVSS >= 7 fails build
+
+Optional gates:
+- **JaCoCo**: 80% line coverage, 70% branch coverage (`mvn -Pcoverage verify`)
+- **OWASP Dependency-Check**: CVSS >= 7 fails build (`mvn -Psecurity verify`)
 
 Run all quality checks:
 ```bash
-./mvnw verify
+mvn verify
 ```
 
 ## Security
 
 ### Authentication
-- JWT-based stateless authentication
-- BCrypt password hashing
-- SecureRandom for token generation
+- JWT-based stateless authentication filter
+- BCrypt password encoder bean available for your login flow
+- Configure the signing secret with `JWT_SECRET` (minimum 32 bytes)
 
 ### Security Headers
-- X-Content-Type-Options: nosniff
-- X-Frame-Options: DENY
-- X-XSS-Protection: 1; mode=block
-- Content-Security-Policy: default-src 'self'
+- Spring Security's default response headers are enabled
+- Add Content-Security-Policy and HSTS explicitly if you serve browser clients over HTTPS
 
 ### CORS
 Configured via `app.cors.allowed-origins` in application.yml
 
 ## Database Migrations
 
-Flyway manages schema evolution:
-- Place SQL migrations in `src/main/resources/db/migration/`
+Flyway is enabled, but this skeleton ships no migrations yet:
+- Add SQL migrations under `src/main/resources/db/migration/`
 - Naming: `V{version}__{description}.sql`
-- Run automatically on startup
+- They run automatically on startup
 
 ## Testing
 
 ```bash
 # Unit tests
-./mvnw test
+mvn test
 
-# Integration tests (requires PostgreSQL)
-./mvnw verify -DskipUnitTests
+# Default build: compile, test, Checkstyle, SpotBugs, package
+mvn verify
 
-# With Testcontainers (auto-starts PostgreSQL)
-./mvnw verify
+# Coverage gate (enable once the project has tests)
+mvn -Pcoverage verify
+
+# OWASP dependency check (downloads vulnerability feeds)
+mvn -Psecurity verify
 ```
 
 ## Deployment
 
 ### Docker
 ```bash
-docker build -t {{artifactId}} .
-docker run -p 8080:8080 {{artifactId}}
+# Provide JWT_SECRET; compose starts PostgreSQL too.
+export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
+docker compose up -d --build
 ```
 
 ### Kubernetes
-Helm charts and K8s manifests can be generated from the Docker image.
+Use the built image as the basis for your own manifests and provide
+`JWT_SECRET`, `DB_PASSWORD`, and the datasource settings as secrets.
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `JWT_SECRET` | JWT signing secret (min 32 chars) | Required |
+| `JWT_SECRET` | JWT signing secret (min 32 bytes) | Required |
 | `JWT_ISSUER` | JWT issuer claim | companion |
 | `DB_USERNAME` | PostgreSQL username | postgres |
-| `DB_PASSWORD` | PostgreSQL password | Required |
+| `DB_PASSWORD` | PostgreSQL password (change in production) | postgres |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated origins | http://localhost:3000 |
 
 ## License

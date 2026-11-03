@@ -9,7 +9,11 @@ import org.springframework.scheduling.annotation.EnableAsync;
  */
 @SpringBootApplication
 @EnableAsync
-public class {{className}} {
+public final class {{className}} {
+
+    private {{className}}() {
+        // Prevent accidental instantiation; Spring Boot starts the app from main.
+    }
 
     public static void main(String[] args) {
         SpringApplication.run({{className}}.class, args);

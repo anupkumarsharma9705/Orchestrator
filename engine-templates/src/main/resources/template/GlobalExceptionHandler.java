@@ -30,7 +30,7 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    private static final Logger LOG = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
      * Handles validation errors from @Valid annotations.
@@ -44,7 +44,7 @@ public class GlobalExceptionHandler {
             errors.put(error.getField(), error.getDefaultMessage());
         }
 
-        log.warn("Validation failed for {}: {}", request.getRequestURI(), errors);
+        LOG.warn("Validation failed for {}: {}", sanitize(request.getRequestURI()), sanitize(errors.toString()));
         
         return buildErrorResponse(
             HttpStatus.BAD_REQUEST,
@@ -65,7 +65,7 @@ public class GlobalExceptionHandler {
         ex.getConstraintViolations().forEach(v -> 
             errors.put(v.getPropertyPath().toString(), v.getMessage()));
         
-        log.warn("Constraint violation for {}: {}", request.getRequestURI(), errors);
+        LOG.warn("Constraint violation for {}: {}", sanitize(request.getRequestURI()), sanitize(errors.toString()));
         
         return buildErrorResponse(
             HttpStatus.BAD_REQUEST,
@@ -82,7 +82,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
             HttpMessageNotReadableException ex, HttpServletRequest request) {
         
-        log.warn("Malformed request body for {}: {}", request.getRequestURI(), ex.getMessage());
+        LOG.warn("Malformed request body for {}: {}",
+            sanitize(request.getRequestURI()), sanitize(ex.getMessage()));
         
         return buildErrorResponse(
             HttpStatus.BAD_REQUEST,
@@ -100,9 +101,9 @@ public class GlobalExceptionHandler {
             MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
         
         String message = String.format("Parameter '%s' should be of type %s",
-            ex.getName(), ex.getRequiredType().getSimpleName());
+            ex.getName(), requiredTypeName(ex));
         
-        log.warn("Type mismatch for {}: {}", request.getRequestURI(), message);
+        LOG.warn("Type mismatch for {}: {}", sanitize(request.getRequestURI()), sanitize(message));
         
         return buildErrorResponse(
             HttpStatus.BAD_REQUEST,
@@ -129,7 +130,8 @@ public class GlobalExceptionHandler {
             message = "Referenced record does not exist";
         }
         
-        log.warn("Data integrity violation for {}: {}", request.getRequestURI(), cause);
+        LOG.warn("Data integrity violation for {}: {}",
+            sanitize(request.getRequestURI()), sanitize(cause));
         
         return buildErrorResponse(
             HttpStatus.CONFLICT,
@@ -146,7 +148,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAccessDenied(
             AccessDeniedException ex, HttpServletRequest request) {
         
-        log.warn("Access denied for {}: {}", request.getRequestURI(), ex.getMessage());
+        LOG.warn("Access denied for {}: {}",
+            sanitize(request.getRequestURI()), sanitize(ex.getMessage()));
         
         return buildErrorResponse(
             HttpStatus.FORBIDDEN,
@@ -163,7 +166,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleBadCredentials(
             BadCredentialsException ex, HttpServletRequest request) {
         
-        log.warn("Bad credentials for {}: {}", request.getRequestURI(), ex.getMessage());
+        LOG.warn("Bad credentials for {}: {}",
+            sanitize(request.getRequestURI()), sanitize(ex.getMessage()));
         
         return buildErrorResponse(
             HttpStatus.UNAUTHORIZED,
@@ -181,7 +185,8 @@ public class GlobalExceptionHandler {
             Exception ex, HttpServletRequest request) {
         
         // Log full stack trace for debugging
-        log.error("Unhandled exception for {}: {}", request.getRequestURI(), ex.getMessage(), ex);
+        LOG.error("Unhandled exception for {}: {}",
+            sanitize(request.getRequestURI()), sanitize(ex.getMessage()), ex);
         
         // Sanitize - don't expose internal details
         return buildErrorResponse(
@@ -211,6 +216,21 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Returns a null-safe display name for the required parameter type.
+     */
+    private static String requiredTypeName(MethodArgumentTypeMismatchException ex) {
+        Class<?> requiredType = ex.getRequiredType();
+        return requiredType == null ? "unknown" : requiredType.getSimpleName();
+    }
+
+    /**
+     * Removes CR/LF characters so user-controlled values cannot forge log lines.
+     */
+    private static String sanitize(String value) {
+        return value == null ? "" : value.replace('\r', '_').replace('\n', '_');
+    }
+
+    /**
      * Standard error response format.
      */
     public record ErrorResponse(
@@ -220,5 +240,9 @@ public class GlobalExceptionHandler {
         String message,
         String path,
         Map<String, String> details
-    ) {}
+    ) {
+        public ErrorResponse {
+            details = details == null ? null : Map.copyOf(details);
+        }
+    }
 }

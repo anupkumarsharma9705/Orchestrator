@@ -1,13 +1,11 @@
 package com.example.orchestrator.core.refiner;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Configuration properties for the Refiner.
  * Fixed stack and rules come from config (not the model).
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.refiner")
 public class RefinerConfig {
 

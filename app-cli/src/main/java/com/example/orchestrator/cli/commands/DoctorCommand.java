@@ -42,6 +42,7 @@ public class DoctorCommand implements Callable<Integer> {
     private static final Pattern JAVA_VERSION_PATTERN = Pattern.compile("version \"(\\d+)\\.(\\d+)");
     private static final Pattern MAVEN_VERSION_PATTERN = Pattern.compile("Apache Maven (\\d+)\\.(\\d+)");
     private static final Pattern GIT_VERSION_PATTERN = Pattern.compile("git version (\\d+)\\.(\\d+)");
+    private static final Pattern DOCKER_VERSION_PATTERN = Pattern.compile("Docker version (\\d+(?:\\.\\d+)*)");
 
     @Option(names = {"--output-format"}, description = "Output format: table, json, markdown")
     private String outputFormat = "table";
@@ -64,7 +65,7 @@ public class DoctorCommand implements Callable<Integer> {
         checkMaven(results);
         checkDocker(results);
         checkGit(results);
-        checkOrchestratorServer(results, new ConfigManager().load());
+        checkOrchestratorServer(results, config);
         checkWorkspace(results);
         checkDiskSpace(results);
         checkPort(results);
@@ -120,28 +121,50 @@ public class DoctorCommand implements Callable<Integer> {
     }
 
     private void checkDocker(DoctorResults results) {
+        // `docker --version` only needs the CLI and works even when the daemon is down.
+        String versionOutput;
         try {
-            // Check Docker CLI
-            String versionOutput = runCommand("docker", "version", "--format", "{{.Server.Version}}");
-            String version = versionOutput.trim();
-            
-            if (!version.isEmpty()) {
-                // Check Docker daemon using docker CLI (secure, no port 2375)
-                try {
-                    String pingOutput = runCommand("docker", "system", "info", "--format", "{{.ServerVersion}}");
-                    if (pingOutput != null && !pingOutput.trim().isEmpty()) {
-                        results.addCheck("Docker 27+", true, "Docker " + version + " (daemon reachable)", "OK");
-                    } else {
-                        results.addCheck("Docker 27+", false, "Docker " + version + " installed but daemon not reachable", "Start Docker daemon");
-                    }
-                } catch (Exception e) {
-                    results.addCheck("Docker 27+", false, "Docker " + version + " installed but daemon not reachable: " + e.getMessage(), "Start Docker daemon");
-                }
-            } else {
-                results.addCheck("Docker 27+", false, "Docker not found or daemon not running", "Install Docker and start daemon");
-            }
+            versionOutput = runCommand("docker", "--version");
         } catch (Exception e) {
             results.addCheck("Docker 27+", false, "Docker not found", "Install Docker 27+ and add to PATH");
+            return;
+        }
+
+        Matcher matcher = DOCKER_VERSION_PATTERN.matcher(versionOutput);
+        if (!matcher.find()) {
+            results.addCheck("Docker 27+", false, "Could not parse Docker version: " + firstLine(versionOutput),
+                    "Reinstall Docker 27+");
+            return;
+        }
+
+        String version = matcher.group(1);
+        int major;
+        try {
+            major = Integer.parseInt(version.split("\\.")[0]);
+        } catch (NumberFormatException e) {
+            results.addCheck("Docker 27+", false, "Could not parse Docker version: " + version, "Reinstall Docker 27+");
+            return;
+        }
+
+        if (major < 27) {
+            results.addCheck("Docker 27+", false, "Docker " + version + " installed (need 27+)", "Upgrade Docker to 27+");
+            return;
+        }
+
+        // Verify the daemon is actually reachable.
+        try {
+            CommandResult info = runCommandResult("docker", "system", "info", "--format", "{{.ServerVersion}}");
+            String serverVersion = info.output().trim();
+            if (info.exitCode() == 0 && !serverVersion.isEmpty()) {
+                results.addCheck("Docker 27+", true,
+                        "Docker " + version + " (daemon " + firstLine(serverVersion) + ")", "OK");
+            } else {
+                results.addCheck("Docker 27+", false,
+                        "Docker " + version + " installed but daemon not reachable", "Start Docker daemon");
+            }
+        } catch (Exception e) {
+            results.addCheck("Docker 27+", false,
+                    "Docker " + version + " installed but daemon not reachable", "Start Docker daemon");
         }
     }
 
@@ -171,7 +194,11 @@ public class DoctorCommand implements Callable<Integer> {
                 results.addCheck("Orchestrator Server", false, "Server at " + config.serverUrl() + " is not healthy", "Start orchestrator server");
             }
         } catch (Exception e) {
-            results.addCheck("Orchestrator Server", false, "Cannot connect to " + config.serverUrl(), "Start orchestrator server at " + config.serverUrl());
+            String cause = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            results.addCheck("Orchestrator Server", false,
+                    "Cannot connect to " + config.serverUrl() + ": " + cause,
+                    "Start orchestrator server at " + config.serverUrl()
+                            + " or run scripts/dev-up");
         }
     }
 
@@ -208,11 +235,11 @@ public class DoctorCommand implements Callable<Integer> {
 
     private void checkPort(DoctorResults results) {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("localhost", 8080), 1000);
-            results.addCheck("Port 8080 free", false, "Port 8080 is already in use", "Stop process using port 8080 or configure different port");
+            socket.connect(new InetSocketAddress("localhost", 8443), 1000);
+            results.addCheck("Port 8443 free", false, "Port 8443 is already in use", "Stop process using port 8443 or configure different port");
         } catch (Exception e) {
             // Connection failed = port is free
-            results.addCheck("Port 8080 free", true, "Port 8080 is available", "OK");
+            results.addCheck("Port 8443 free", true, "Port 8443 is available", "OK");
         }
     }
 
@@ -230,7 +257,18 @@ public class DoctorCommand implements Callable<Integer> {
         }
     }
 
+    private record CommandResult(int exitCode, String output) {
+    }
+
     private String runCommand(String... command) throws IOException, InterruptedException {
+        CommandResult result = runCommandResult(command);
+        if (result.exitCode() != 0) {
+            throw new IOException("Command failed (exit " + result.exitCode() + "): " + firstLine(result.output()));
+        }
+        return result.output();
+    }
+
+    private CommandResult runCommandResult(String... command) throws IOException, InterruptedException {
         // On Windows, use cmd /c for .cmd/.bat files (like mvn.cmd, docker.cmd)
         boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
         List<String> fullCommand = new ArrayList<>();
@@ -239,21 +277,29 @@ public class DoctorCommand implements Callable<Integer> {
             fullCommand.add("/c");
         }
         fullCommand.addAll(List.of(command));
-        
+
         ProcessBuilder pb = new ProcessBuilder(fullCommand);
         pb.redirectErrorStream(true);
         pb.environment().putAll(System.getenv());
         Process process = pb.start();
-        
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-            }
+
+        if (!process.waitFor(15, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new IOException("Command timed out: " + String.join(" ", command));
         }
-        int exitCode = process.waitFor(10, TimeUnit.SECONDS) ? process.exitValue() : -1;
-        return output.toString();
+
+        String output = new String(process.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        return new CommandResult(process.exitValue(), output);
+    }
+
+    private String firstLine(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        int newline = trimmed.indexOf('\n');
+        return newline >= 0 ? trimmed.substring(0, newline).trim() : trimmed;
     }
 
     private String extractJavaVersion(String output) {

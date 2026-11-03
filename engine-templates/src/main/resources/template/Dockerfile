@@ -21,7 +21,7 @@ RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
 # Copy built jar
-COPY --from=builder /app/target/{{jarName}} app.jar
+COPY --from=builder /app/target/*.jar app.jar
 
 # Change ownership
 RUN chown appuser:appgroup app.jar

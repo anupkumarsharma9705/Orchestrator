@@ -1,0 +1,20 @@
+# Build context is the repository root (see orchestrator-server/Dockerfile).
+target/
+**/target/
+.git/
+**/.git/
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+certs/
+*.p12
+*.crt
+*.key
+*.csr
+*.log
+*.db
+*.sqlite
+node_modules/
+docs/

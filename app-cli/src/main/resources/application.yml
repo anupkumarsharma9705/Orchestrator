@@ -8,10 +8,18 @@ companion:
   # SSL/TLS Configuration
   ssl:
     enabled: true
-    trust-store: classpath:certs/truststore.p12
-    trust-store-password: ${SSL_TRUST_STORE_PASSWORD:changeit}
+    trust-store: ${SSL_TRUST_STORE:}
+    trust-store-password: ${SSL_TRUST_STORE_PASSWORD:}
     trust-store-type: PKCS12
-    verify-hostname: false  # Set to true in production with valid certs
+    verify-hostname: true
+    # mTLS (required by the default server). Run scripts/dev-up to generate
+    # client certificates and write ~/.companion/config.yaml automatically.
+    mtls-enabled: ${SSL_MTLS_ENABLED:false}
+    key-store: ${SSL_KEY_STORE:}
+    key-store-password: ${SSL_KEY_STORE_PASSWORD:}
+    key-store-type: PKCS12
+    key-alias: ${SSL_KEY_ALIAS:client}
+
 
   # Default project name (used when not specified)
   default-project: ""

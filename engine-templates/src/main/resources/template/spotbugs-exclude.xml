@@ -61,6 +61,33 @@
         <Class name="~.*\.config\..*"/>
     </Match>
 
+    <!-- Spring beans intentionally hold injected collaborators. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="~.*\.(config|security)\..*"/>
+    </Match>
+
+    <!-- This API is stateless and authenticates with the Authorization header,
+         not cookies, so CSRF protection does not apply. Re-enable this check
+         if cookie-based sessions are added. -->
+    <Match>
+        <Bug pattern="SPRING_CSRF_PROTECTION_DISABLED"/>
+        <Class name="~.*\.config\.SecurityConfig"/>
+    </Match>
+
+    <!-- Request values and exception text are sanitized by sanitize() before
+         logging (CR and LF are replaced), which this detector cannot see. -->
+    <Match>
+        <Bug pattern="CRLF_INJECTION_LOGS"/>
+        <Class name="~.*\.exception\.GlobalExceptionHandler"/>
+    </Match>
+
+    <!-- Reading the Authorization header is the purpose of the JWT filter. -->
+    <Match>
+        <Bug pattern="SERVLET_HEADER"/>
+        <Class name="~.*\.security\.JwtAuthenticationFilter"/>
+    </Match>
+
     <!-- Suppress security manager issues in Spring Boot -->
     <Match>
         <Bug pattern="DM_DEFAULT_ENCODING"/>

@@ -1,12 +1,10 @@
 package com.example.orchestrator.core.coder;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Configuration properties for the Coder.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.coder")
 public class CoderConfig {
 

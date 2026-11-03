@@ -1,0 +1,87 @@
+# Project Conventions - Used by the orchestrator for code generation
+# Copy this file to your project root as conventions.yaml and customize
+
+package_structure: "com.{domain}.{module}.{layer}"
+domain: "fintech"
+modules:
+  gateway:
+    layers: [controller, service, repository, entity, dto, config, exception]
+    naming:
+      controller: "*Controller"
+      service: "*Service"
+      service_impl: "*ServiceImpl"
+      repository: "*Repository"
+      entity: "*Entity"
+      dto: ["*Dto", "*Request", "*Response"]
+    patterns:
+      rest: |
+        @RestController
+        @RequestMapping("/api/{plural}")
+        @RequiredArgsConstructor
+        public class {Name}Controller {
+          private final {Name}Service service;
+          
+          @GetMapping("/{id}")
+          public ResponseEntity<{Name}Dto> get(@PathVariable Long id) {
+            return ResponseEntity.ok(service.get(id));
+          }
+          
+          @GetMapping
+          public ResponseEntity<Page<{Name}Dto>> list(Pageable pageable) {
+            return ResponseEntity.ok(service.list(pageable));
+          }
+          
+          @PostMapping
+          public ResponseEntity<{Name}Dto> create(@Valid @RequestBody {Name}Request request) {
+            return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
+          }
+          
+          @PutMapping("/{id}")
+          public ResponseEntity<{Name}Dto> update(@PathVariable Long id, @Valid @RequestBody {Name}Request request) {
+            return ResponseEntity.ok(service.update(id, request));
+          }
+          
+          @DeleteMapping("/{id}")
+          public ResponseEntity<Void> delete(@PathVariable Long id) {
+            service.delete(id);
+            return ResponseEntity.noContent().build();
+          }
+        }
+      validation: "Jakarta @Valid + @NotNull + @Size + @Email"
+      mapping: "MapStruct @Mapper(componentModel = \"spring\")"
+      test: |
+        @DataJpaTest
+        @AutoConfigureTestDatabase(replace = Replace.NONE)
+        class {Name}RepositoryTest {
+          @Autowired
+          private {Name}Repository repository;
+          
+          @Test
+          void shouldSaveAndFind() {
+            // test implementation
+          }
+        }
+        
+        @SpringBootTest
+        @AutoConfigureMockMvc
+        class {Name}ControllerTest {
+          @Autowired
+          private MockMvc mockMvc;
+          
+          @Test
+          void shouldReturnList() throws Exception {
+            mockMvc.perform(get("/api/{plural}"))
+              .andExpect(status().isOk());
+          }
+        }
+
+# Default values for new modules
+defaults:
+  base_package: "com.{domain}"
+  controller_package: "com.{domain}.{module}.controller"
+  service_package: "com.{domain}.{module}.service"
+  repository_package: "com.{domain}.{module}.repository"
+  entity_package: "com.{domain}.{module}.entity"
+  dto_package: "com.{domain}.{module}.dto"
+  config_package: "com.{domain}.{module}.config"
+  exception_package: "com.{domain}.{module}.exception"

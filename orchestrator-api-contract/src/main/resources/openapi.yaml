@@ -1,0 +1,299 @@
+openapi: 3.0.3
+info:
+  title: Java Companion Orchestrator API
+  version: 1.0.0
+  description: |
+    REST API for the Java Companion Orchestrator - a CLI tool that generates
+    production-ready Spring Boot REST API projects from natural language descriptions,
+    with built-in security scanning, testing, and auto-fixing.
+  contact:
+    name: Java Companion Orchestrator Team
+    url: https://github.com/example/java-companion
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: https://localhost:8443/api
+    description: Local Development Server
+  - url: https://api.example.com/api
+    description: Production Server
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer <token>\""
+
+  schemas:
+    CreateTaskRequest:
+      type: object
+      required:
+        - projectId
+        - request
+        - requester
+      properties:
+        projectId:
+          type: string
+          description: Unique identifier for the project
+        request:
+          type: string
+          description: Natural language description of the task
+        requester:
+          type: string
+          description: Username or identifier of the requester
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Optional metadata for the task
+
+    TaskResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        projectId:
+          type: string
+        request:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, WAITING_CLARIFICATION, WAITING_APPROVAL, EXECUTING, COMPLETED, FAILED, REJECTED]
+        planJson:
+          type: string
+        error:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+
+    ClarificationResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        status:
+          type: string
+        planJson:
+          type: string
+        error:
+          type: string
+
+    ApprovalResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+
+    Artifact:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [SOURCE, TEST, CONFIG, DOCKER, DOCUMENTATION, OTHER]
+        size:
+          type: integer
+          format: int64
+        checksum:
+          type: string
+        createdAt:
+          type: string
+
+    ArtifactsResponse:
+      type: object
+      properties:
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Artifact'
+
+    VersionResponse:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+        buildVersion:
+          type: string
+        buildTime:
+          type: string
+        buildTimestamp:
+          type: integer
+          format: int64
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        timestamp:
+          type: string
+        path:
+          type: string
+
+paths:
+  /version:
+    get:
+      summary: Get API version information
+      operationId: getVersion
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+
+  /tasks:
+    post:
+      summary: Create a new task
+      operationId: createTask
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /tasks/{id}:
+    get:
+      summary: Get task status
+      operationId: getTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /tasks/{id}/clarification:
+    post:
+      summary: Submit clarification answers
+      operationId: submitClarification
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        '200':
+          description: Clarification submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClarificationResponse'
+        '404':
+          description: Task not found
+
+  /tasks/{id}/approval:
+    post:
+      summary: Request approval for task
+      operationId: requestApproval
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Approval requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalResponse'
+        '404':
+          description: Task not found
+
+  /tasks/{id}/artifacts:
+    get:
+      summary: Get task artifacts
+      operationId: getArtifacts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of artifacts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactsResponse'
+        '404':
+          description: Task not found

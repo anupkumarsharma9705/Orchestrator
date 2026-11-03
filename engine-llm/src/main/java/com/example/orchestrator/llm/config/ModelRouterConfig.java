@@ -1,7 +1,6 @@
 package com.example.orchestrator.llm.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +8,6 @@ import java.util.Map;
 /**
  * Configuration properties for the model router.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.model-router")
 public class ModelRouterConfig {
 

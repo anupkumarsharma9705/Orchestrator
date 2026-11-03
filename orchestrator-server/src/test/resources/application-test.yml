@@ -1,0 +1,110 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    # Production migrations target PostgreSQL (identity columns, JSONB, GIN
+    # indexes). Tests build their schema from the JPA entities instead.
+    enabled: false
+    locations: classpath:db/orchestrator/migration
+    baseline-on-migrate: true
+
+orchestrator:
+  cli:
+    enabled: false
+  api-key: test-api-key-for-tests-only-0123456789abcdef
+  model-router:
+    default-provider: test
+    timeout-seconds: 60
+    max-retries: 3
+    retry-delay-ms: 1000
+    default-profile: GENERAL
+    providers:
+      test:
+        enabled: true
+        base-url: https://test.api.example.com/v1
+        api-key: test-key
+        models:
+          planner: test-model
+          coder: test-model
+          reviewer: test-model
+          security: test-model
+          docs: test-model
+          general: test-model
+        rate-limit-rpm: 60
+        timeout-seconds: 60
+        supports-streaming: false
+      nvidia:
+        enabled: false
+      openrouter:
+        enabled: false
+      ollama:
+        enabled: false
+      kaggle:
+        enabled: false
+    profiles:
+      planner:
+        provider: test
+        model: test-model
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: "You are an expert software architect. Create detailed, actionable implementation plans."
+        enabled: true
+        fallback-profiles: [CODER, GENERAL]
+      coder:
+        provider: test
+        model: test-model
+        temperature: 0.2
+        max-tokens: 8192
+        top-p: 0.95
+        system-prompt: "You are an expert software engineer. Write clean, correct, production-ready code."
+        enabled: true
+        fallback-profiles: [REVIEWER, GENERAL]
+      reviewer:
+        provider: test
+        model: test-model
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: "You are a senior code reviewer. Find bugs, security issues, and suggest improvements."
+        enabled: true
+        fallback-profiles: [SECURITY_REASONING, GENERAL]
+      security_reasoning:
+        provider: test
+        model: test-model
+        temperature: 0.0
+        max-tokens: 4096
+        top-p: 1.0
+        system-prompt: "You are a security expert. Find vulnerabilities, injection flaws, security anti-patterns, exposed secrets, unsafe configuration, and insecure dependencies."
+        enabled: true
+        fallback-profiles: [REVIEWER, GENERAL]
+      documentation:
+        provider: test
+        model: test-model
+        temperature: 0.3
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: "You are a technical writer. Create clear, accurate documentation."
+        enabled: true
+        fallback-profiles: [GENERAL]
+      general:
+        provider: test
+        model: test-model
+        temperature: 0.5
+        max-tokens: 4096
+        top-p: 0.95
+        system-prompt: "You are a helpful AI assistant."
+        enabled: true
+        fallback-profiles: []

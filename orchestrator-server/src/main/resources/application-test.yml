@@ -1,0 +1,15 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+
+orchestrator:
+  cli:
+    enabled: false
+  model-router:
+    providers:
+      openrouter:
+        enabled: false
+      ollama:
+        enabled: false
+      kaggle:
+        enabled: false

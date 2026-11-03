@@ -32,6 +32,7 @@ gradlew
 gradlew.bat
 
 # Secrets - never commit
+.env
 *.pem
 *.key
 *.crt
@@ -45,6 +46,9 @@ gradlew.bat
 !.env.example
 secrets/
 *.secret
+certs/
+*.csr
+*.srl
 
 # Docker
 docker-compose.override.yml
@@ -99,3 +103,7 @@ logs/
 dist/
 build/
 out/
+.docusaurus/
+
+# Node
+node_modules/

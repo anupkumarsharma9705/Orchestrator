@@ -1,7 +1,6 @@
 package com.example.orchestrator.core.fixer;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 import jakarta.validation.constraints.Max;
@@ -11,7 +10,6 @@ import jakarta.validation.constraints.Positive;
 /**
  * Configuration for the Fixer component.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.fixer")
 @Validated
 public class FixerConfig {

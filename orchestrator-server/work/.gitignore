@@ -1,0 +1,11 @@
+# Work tracking - track these files
+!DAILY_LOG.md
+!PROGRESS.md
+!BLOCKERS.md
+!DECISIONS.md
+!README.md
+
+# Ignore temporary files
+*.tmp
+*.swp
+*~

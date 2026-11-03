@@ -1,12 +1,10 @@
 package com.example.orchestrator.core.planner;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Configuration properties for the Planner.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.planner")
 public class PlannerConfig {
 

@@ -1,142 +1,58 @@
-# Gitleaks Configuration for Java Companion Orchestrator
-# https://github.com/gitleaks/gitleaks
+# Gitleaks configuration for Java Companion Orchestrator.
+# Valid TOML for gitleaks v8.25+ ([[allowlists]], not the deprecated [allowlist]).
+# Default rules are extended with product-specific patterns; test fixtures,
+# documentation placeholders, and build output are allowlisted so real
+# credentials still fail the build.
 
-# Title for the config
 title = "Java Companion Orchestrator - Secret Detection"
 
-# Path to scan (default: current directory)
-source = "."
-
-# Verbose output
-verbose = true
-
-# Exit code on findings (0 = no findings, 1 = findings)
-exit-code = 1
-
-# Report format
-report-format = "sarif"
-report-path = "gitleaks.sarif"
-
-# Redact secrets in output
-redact = true
-
-# Disable default rules we don't need
-disable-default-rules = false
-
-# Custom rules
-[[rules]]
-  description = "AWS Access Key ID"
-  regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
-  tags = ["key", "AWS"]
+[extend]
+useDefault = true
 
 [[rules]]
-  description = "AWS Secret Access Key"
-  regex = '''(?i)aws[_-]?secret[_-]?access[_-]?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?'''
-  tags = ["key", "AWS"]
+id = "companion-api-key"
+description = "Hard-coded orchestrator API key"
+regex = '''(?i)(?:orchestrator_api_key|companion_api_key|x-api-key)\s*[:=]\s*["']?[0-9a-f]{64}["']?'''
+tags = ["key", "companion"]
 
 [[rules]]
-  description = "Generic API Key"
-  regex = '''(?i)(api[_-]?key|apikey|api[_-]?secret)\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}["']?'''
-  tags = ["key", "api"]
+id = "companion-jwt-secret"
+description = "Hard-coded JWT signing secret"
+regex = '''(?i)jwt[_-]?secret\s*[:=]\s*["']?[A-Za-z0-9+/=_-]{32,}["']?'''
+tags = ["secret", "jwt"]
 
-[[rules]]
-  description = "Generic Secret"
-  regex = '''(?i)(secret|password|token|auth)\s*[:=]\s*["']?[A-Za-z0-9_\-]{8,}["']?'''
-  tags = ["secret"]
-
-[[rules]]
-  description = "GitHub Personal Access Token"
-  regex = '''gh[pousr]_[A-Za-z0-9]{36,}'''
-  tags = ["key", "GitHub"]
-
-[[rules]]
-  description = "GitHub App Token"
-  regex = '''ghs_[A-Za-z0-9]{36,}'''
-  tags = ["key", "GitHub"]
-
-[[rules]]
-  description = "Slack Token"
-  regex = '''xox[baprs]-[A-Za-z0-9]{10,}-[A-Za-z0-9]{10,}-[A-Za-z0-9]{10,}-[A-Za-z0-9]{10,}'''
-  tags = ["key", "Slack"]
-
-[[rules]]
-  description = "Docker Hub Token"
-  regex = '''dockerhub[_-]?token\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}["']?'''
-  tags = ["key", "Docker"]
-
-[[rules]]
-  description = "NPM Token"
-  regex = '''npm_[A-Za-z0-9]{36,}'''
-  tags = ["key", "NPM"]
-
-[[rules]]
-  description = "PyPI Token"
-  regex = '''pypi-[A-Za-z0-9]{40,}'''
-  tags = ["key", "PyPI"]
-
-[[rules]]
-  description = "Private Key (RSA/DSA/EC/OPENSSH/PGP)"
-  regex = '''-----BEGIN\s+(RSA|DSA|EC|OPENSSH|PGP)\s+PRIVATE\s+KEY-----'''
-  tags = ["key", "private"]
-
-[[rules]]
-  description = "JWT Token"
-  regex = '''eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*'''
-  tags = ["token", "JWT"]
-
-[[rules]]
-  description = "Google API Key"
-  regex = '''AIza[0-9A-Za-z\-_]{35}'''
-  tags = ["key", "Google"]
-
-[[rules]]
-  description = "Azure Storage Key"
-  regex = '''DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]+;EndpointSuffix=core\.windows\.net'''
-  tags = ["key", "Azure"]
-
-[[rules]]
-  description = "Generic Connection String"
-  regex = '''(?i)(connectionstring|connection[_-]?string)\s*[:=]\s*["']?[^"'\s]{20,}["']?'''
-  tags = ["secret", "connection"]
-
-# Allowlist for test files and known false positives
-allowlist:
-  description = "Test and example files"
-  paths = [
-    "*/test/**",
-    "*/tests/**",
-    "*Test*.java",
-    "*Test*.kt",
-    "*Spec*.java",
-    "*Spec*.kt",
-    "*.test.*",
-    "*.spec.*",
-    "*/fixtures/**",
-    "*/mocks/**"
-  ]
-  regexes = [
-    # Test/example values
-    "test[_-]?key",
-    "example[_-]?key",
-    "dummy[_-]?key",
-    "fake[_-]?key",
-    "mock[_-]?key",
-    "placeholder[_-]?key",
-    "sample[_-]?key"
-  ]
-  commits = []
-  stopwords = [
-    "test",
-    "example",
-    "dummy",
-    "fake",
-    "mock",
-    "placeholder",
-    "sample",
-    "changeme",
-    "changethis",
-    "your[_-]?key",
-    "your[_-]?secret",
-    "your[_-]?token",
-    "your[_-]?password"
-  ]
+[[allowlists]]
+description = "Test data, fixtures, docs samples, detector sources, and build output"
+paths = [
+  '''(^|/)src/test/''',
+  '''(^|/)src/it/''',
+  '''(^|/)target/''',
+  '''(^|/)build/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)docs/build/''',
+  '''(^|/)docs/\.docusaurus/''',
+  '''(?i)(^|/)(fixtures|mocks?)/''',
+  '''(?i).*(Test|Tests|Spec)\.(java|kt|groovy)$''',
+  '''(?i)\.env\.example$''',
+  '''SecretScanner\.java$''',
+]
+regexes = [
+  '''(?i)test[-_]?(?:key|secret|token|password)''',
+  '''(?i)(?:example|dummy|fake|mock|placeholder|sample)[-_]?(?:key|secret|token|password)?''',
+  '''(?i)your[-_]''',
+  '''(?i)replace[-_]with''',
+  '''(?i)changeme|changethis''',
+  '''0123456789abcdef0123456789abcdef''',
+]
+stopwords = [
+  "test",
+  "example",
+  "dummy",
+  "fake",
+  "mock",
+  "placeholder",
+  "sample",
+  "changeme",
+  "changethis",
+  "replace",
+]

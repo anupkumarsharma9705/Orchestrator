@@ -1,0 +1,48 @@
+{
+  "version": "0.1.0",
+  "description": "Generate production-ready Spring Boot REST APIs from natural language",
+  "homepage": "https://github.com/akash/java-companion",
+  "license": "Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/akash/java-companion/releases/download/v0.1.0/companion.jar",
+      "hash": "REPLACE_WITH_ACTUAL_SHA256_ON_RELEASE"
+    }
+  },
+  "depends": "openjdk21",
+  "bin": "companion.jar",
+  "pre_install": [
+    "@('companion.bat', 'companion.sh') | ForEach-Object {",
+    "  if (Test-Path $_) { Remove-Item $_ -Force }",
+    "}"
+  ],
+  "post_install": [
+    "$jar = \"$dir\\companion.jar\"",
+    "$shim = \"$dir\\companion.bat\"",
+    "@",
+    "  '@echo off',
+    '  set JAVA_CMD=java',
+    '  if (\"%JAVA_HOME%\") set JAVA_CMD=%JAVA_HOME%\\bin\\java.exe',
+    '  \"%JAVA_CMD%\" -jar \"%~dp0companion.jar\" %*',
+    '  exit /b %ERRORLEVEL%' | Set-Content -Encoding ASCII $shim",
+    "$sh = \"$dir\\companion.sh\"",
+    "@",
+    "  '#!/bin/bash',
+    '  set -euo pipefail',
+    '  JAVA_CMD=\"java\"',
+    '  if [ -n \"$JAVA_HOME\" ]; then JAVA_CMD=\"$JAVA_HOME/bin/java\"; fi',
+    '  \"$JAVA_CMD\" -jar \"$(dirname \"$0\")/companion.jar\" \"$@\"' | Set-Content $sh",
+    "chmod +x $sh"
+  ],
+  "checkver": {
+    "github": "akash/java-companion",
+    "regex": "v([\\d.]+)"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/akash/java-companion/releases/download/v$version/companion.jar"
+      }
+    }
+  }
+}

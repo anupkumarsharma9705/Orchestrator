@@ -1,0 +1,65 @@
+name: java-companion
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: companion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - run scripts/dev-up or copy .env.example to .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U companion -d orchestrator"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  orchestrator-server:
+    build:
+      context: .
+      dockerfile: orchestrator-server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${ORCHESTRATOR_PORT:-8443}:8443"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestrator
+      SPRING_DATASOURCE_USERNAME: companion
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      ORCHESTRATOR_API_KEY: ${ORCHESTRATOR_API_KEY:?ORCHESTRATOR_API_KEY is required}
+      SSL_KEY_STORE: /certs/server-keystore.p12
+      SSL_TRUST_STORE: /certs/truststore.p12
+      SSL_KEY_STORE_PASSWORD: ${CERT_PASSWORD:?CERT_PASSWORD is required}
+      SSL_TRUST_STORE_PASSWORD: ${CERT_PASSWORD:?CERT_PASSWORD is required}
+      # NVIDIA is the default provider. OpenRouter is implemented but disabled
+      # unless ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED=true.
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED: ${ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED:-false}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - ./certs:/certs:ro
+    healthcheck:
+      # Full TLS handshake with the client certificate proves both the server
+      # and the mTLS configuration are ready. The JRE image ships without a
+      # shell HTTP client that can present a PKCS12 client certificate.
+      test:
+        - CMD-SHELL
+        - >-
+          umask 077 &&
+          openssl pkcs12 -in /certs/client-keystore.p12
+          -passin pass:$$SSL_KEY_STORE_PASSWORD -nodes -out /tmp/health-client.pem 2>/dev/null &&
+          echo | timeout 5 openssl s_client -connect 127.0.0.1:8443
+          -CAfile /certs/ca.crt -cert /tmp/health-client.pem -key /tmp/health-client.pem
+          -verify_return_error -brief >/dev/null 2>&1
+      interval: 10s
+      timeout: 8s
+      retries: 18
+      start_period: 45s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

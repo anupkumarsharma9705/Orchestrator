@@ -264,6 +264,7 @@ class TemplateEngineTest {
         assertThat(compose).contains("postgres:16-alpine");
         assertThat(compose).contains("healthcheck:");
         assertThat(compose).contains("pg_isready");
+        assertThat(compose).contains("SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/");
     }
 
     @Test
@@ -288,11 +289,16 @@ class TemplateEngineTest {
 
         String ci = java.nio.file.Files.readString(tempDir.resolve(".github/workflows/ci.yml"));
         
-        assertThat(ci).contains("checkstyle:check");
-        assertThat(ci).contains("spotbugs:check");
-        assertThat(ci).contains("dependency-check:check");
-        assertThat(ci).contains("jacoco:check");
-        assertThat(ci).contains("trivy-action");
+        assertThat(ci).contains("mvn -B -ntp verify");
+        assertThat(ci).contains("-Psecurity dependency-check:check");
+        assertThat(ci).contains("if: env.NVD_API_KEY != ''");
+        assertThat(ci).doesNotContain("trivy-action");
+        // Generated projects must not require registry credentials to build.
+        assertThat(ci).doesNotContain("secrets.DOCKERHUB_USERNAME");
+        assertThat(ci).doesNotContain("secrets.DOCKERHUB_TOKEN");
+        assertThat(ci).doesNotContain("./mvnw");
+        assertThat(ci).doesNotContain("checkstyle:check");
+        assertThat(ci).doesNotContain("jacoco:check");
     }
 
     private Plan createSamplePlan() {

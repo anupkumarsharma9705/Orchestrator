@@ -1,0 +1,1 @@
+{"attemptId":"6e0a1843","repairId":"REPAIR-090BA1DA","attemptNumber":1,"taskId":"test-task","status":"FAILED","failureReason":"compile: Path not found: null","steps":[{"name":"compile","success":false,"output":null,"error":"Path not found: null","durationMs":65,"timestamp":"2026-10-05T07:09:37.097064Z"}],"durationMs":65,"timestamp":"2026-10-05T07:09:37.097064Z","success":false}

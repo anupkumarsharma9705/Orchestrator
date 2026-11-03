@@ -59,7 +59,7 @@ class SandboxServiceTest {
     @Test
     void config_hasDefaults() {
         SandboxConfig config = new SandboxConfig();
-        assertThat(config.getDockerImage()).isEqualTo("orchestrator/sandbox:latest");
+        assertThat(config.getDockerImage()).isEqualTo("orchestrator/sandbox:1.0.0");
         assertThat(config.getDefaultTimeoutSeconds()).isEqualTo(300);
         assertThat(config.getMemoryLimitMb()).isEqualTo(2048);
         assertThat(config.getCpuLimitCores()).isEqualTo(2);
@@ -175,7 +175,7 @@ class SandboxServiceTest {
         // Image validation runs first and throws IllegalArgumentException
         assertThatThrownBy(invalidConfig::validateConfiguration)
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("denied pattern");
+            .hasMessageContaining("Image matches denied pattern");
     }
 
     @Test

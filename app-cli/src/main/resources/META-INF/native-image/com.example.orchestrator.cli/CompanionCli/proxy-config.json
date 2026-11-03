@@ -1,0 +1,18 @@
+[
+  {
+    "package": "java.net",
+    "pattern": ".*"
+  },
+  {
+    "package": "java.security",
+    "pattern": ".*"
+  },
+  {
+    "package": "javax.net.ssl",
+    "pattern": ".*"
+  },
+  {
+    "package": "sun.security.ssl",
+    "pattern": ".*"
+  }
+]

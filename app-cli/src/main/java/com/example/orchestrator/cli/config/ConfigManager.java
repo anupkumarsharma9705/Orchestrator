@@ -56,13 +56,63 @@ public class ConfigManager {
             @SuppressWarnings("unchecked")
             Map<String, Object> raw = yaml.load(content);
             if (raw == null || raw.isEmpty()) {
-                return CliConfig.defaults();
+                return applyEnvironment(CliConfig.defaults());
             }
-            return mapToConfig(raw);
+            return applyEnvironment(mapToConfig(raw));
         } catch (IOException e) {
             System.err.println("Warning: Failed to load config from " + configFile + ": " + e.getMessage());
-            return CliConfig.defaults();
+            return applyEnvironment(CliConfig.defaults());
         }
+    }
+
+    /**
+     * Environment variables override file values. Passwords should preferably be
+     * supplied this way so they never have to be written to disk.
+     */
+    private CliConfig applyEnvironment(CliConfig config) {
+        String serverUrl = envOrNull("COMPANION_SERVER_URL");
+        String apiKey = envOrNull("COMPANION_API_KEY");
+        String trustStore = envOrNull("COMPANION_SSL_TRUSTSTORE");
+        String trustStorePassword = envOrNull("COMPANION_SSL_TRUSTSTORE_PASSWORD");
+        String keyStore = envOrNull("COMPANION_SSL_KEYSTORE");
+        String keyStorePassword = envOrNull("COMPANION_SSL_KEYSTORE_PASSWORD");
+        String mtls = envOrNull("COMPANION_SSL_MTLS_ENABLED");
+
+        if (serverUrl == null && apiKey == null && trustStore == null
+                && trustStorePassword == null && keyStore == null
+                && keyStorePassword == null && mtls == null) {
+            return config;
+        }
+
+        CliConfig.SslConfig ssl = config.ssl() != null ? config.ssl() : CliConfig.SslConfig.defaults();
+        CliConfig.SslConfig updatedSsl = new CliConfig.SslConfig(
+            ssl.enabled(),
+            trustStore != null ? trustStore : ssl.trustStore(),
+            trustStorePassword != null ? trustStorePassword : ssl.trustStorePassword(),
+            ssl.trustStoreType(),
+            ssl.verifyHostname(),
+            mtls != null ? Boolean.parseBoolean(mtls) : ssl.mtlsEnabled(),
+            keyStore != null ? keyStore : ssl.keyStore(),
+            keyStorePassword != null ? keyStorePassword : ssl.keyStorePassword(),
+            ssl.keyStoreType(),
+            ssl.keyAlias()
+        );
+
+        return new CliConfig(
+            serverUrl != null ? serverUrl : config.serverUrl(),
+            config.defaultProject(),
+            config.outputFormat(),
+            config.timeoutSeconds(),
+            apiKey != null ? apiKey : config.apiKey(),
+            config.logLevel(),
+            config.noColor(),
+            updatedSsl
+        );
+    }
+
+    private static String envOrNull(String name) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? null : value;
     }
 
     private CliConfig mapToConfig(Map<String, Object> raw) {
@@ -94,7 +144,17 @@ public class ConfigManager {
         String trustStoreType = getString(sslMap, "trustStoreType", CliConfig.SslConfig.defaults().trustStoreType());
         Boolean verifyHostname = getBoolean(sslMap, "verifyHostname", CliConfig.SslConfig.defaults().verifyHostname());
         
-        return new CliConfig.SslConfig(enabled, trustStore, trustStorePassword, trustStoreType, verifyHostname);
+        // mTLS fields
+        Boolean mtlsEnabled = getBoolean(sslMap, "mtlsEnabled", CliConfig.SslConfig.defaults().mtlsEnabled());
+        String keyStore = getString(sslMap, "keyStore", CliConfig.SslConfig.defaults().keyStore());
+        String keyStorePassword = getString(sslMap, "keyStorePassword", CliConfig.SslConfig.defaults().keyStorePassword());
+        String keyStoreType = getString(sslMap, "keyStoreType", CliConfig.SslConfig.defaults().keyStoreType());
+        String keyAlias = getString(sslMap, "keyAlias", CliConfig.SslConfig.defaults().keyAlias());
+        
+        return new CliConfig.SslConfig(
+            enabled, trustStore, trustStorePassword, trustStoreType, verifyHostname,
+            mtlsEnabled, keyStore, keyStorePassword, keyStoreType, keyAlias
+        );
     }
 
     private String getString(Map<String, Object> map, String key, String defaultValue) {
@@ -145,8 +205,32 @@ public class ConfigManager {
             data.put("logLevel", config.logLevel());
             data.put("noColor", config.noColor());
 
+            if (config.ssl() != null) {
+                CliConfig.SslConfig ssl = config.ssl();
+                Map<String, Object> sslData = new LinkedHashMap<>();
+                sslData.put("enabled", ssl.enabled());
+                sslData.put("trustStore", ssl.trustStore());
+                sslData.put("trustStorePassword", ssl.trustStorePassword());
+                sslData.put("trustStoreType", ssl.trustStoreType());
+                sslData.put("verifyHostname", ssl.verifyHostname());
+                sslData.put("mtlsEnabled", ssl.mtlsEnabled());
+                sslData.put("keyStore", ssl.keyStore());
+                sslData.put("keyStorePassword", ssl.keyStorePassword());
+                sslData.put("keyStoreType", ssl.keyStoreType());
+                sslData.put("keyAlias", ssl.keyAlias());
+                data.put("ssl", sslData);
+            }
+
             String yamlContent = yaml.dump(data);
             Files.writeString(configFile, yamlContent);
+
+            // The config may contain keystore passwords; restrict it to the owner.
+            try {
+                Files.setPosixFilePermissions(configFile,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            } catch (UnsupportedOperationException | IOException ignored) {
+                // Non-POSIX filesystem (for example Windows): ACL inheritance applies.
+            }
         } catch (IOException e) {
             throw new RuntimeException("Failed to save config to " + configFile, e);
         }

@@ -1,0 +1,365 @@
+spring:
+  autoconfigure:
+    # Authentication is API-key based; without this exclusion Boot creates an
+    # in-memory user and prints a generated password to the logs.
+    exclude:
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orchestrator}
+    driver-class-name: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:companion}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      validation-timeout: 5000
+      leak-detection-threshold: 60000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          lob:
+            non_contextual_creation: true
+  flyway:
+    enabled: true
+    # Namespaced location: the engine-store module also ships db/migration,
+    # and Flyway would see duplicate versions from the nested jar.
+    locations: classpath:db/orchestrator/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    baseline-description: "Initial baseline"
+    validate-on-migrate: true
+    out-of-order: false
+    clean-disabled: true
+  sql:
+    init:
+      mode: never
+  # Docker socket security - use TCP with TLS instead of Unix socket
+  docker:
+    host: ${DOCKER_HOST:tcp://localhost:2376}
+    tls-verify: true
+    cert-path: ${DOCKER_CERT_PATH:}
+  # Graceful shutdown
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  # Graceful shutdown for Spring Boot
+  application:
+    name: orchestrator-server
+  # Security Policy Configuration (H-22)
+  security:
+    policy:
+      max-regex-time-ms: 200
+      max-input-chars: 100000
+      max-line-length: 10000
+  # OpenTelemetry Distributed Tracing (H-15)
+  otel:
+    enabled: false
+    exporter: otlp
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+    zipkin:
+      endpoint: ${OTEL_EXPORTER_ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+    sampling-rate: ${OTEL_SAMPLING_RATE:1.0}
+
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: ${SSL_KEY_STORE:}
+    key-store-password: ${SSL_KEY_STORE_PASSWORD:}
+    key-store-type: PKCS12
+    key-alias: ${SSL_KEY_ALIAS:server}
+    trust-store: ${SSL_TRUST_STORE:}
+    trust-store-password: ${SSL_TRUST_STORE_PASSWORD:}
+    trust-store-type: PKCS12
+    client-auth: need
+    protocol: TLS
+    ciphers: TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,TLS_AES_128_GCM_SHA256
+  # Graceful shutdown
+  shutdown: graceful
+
+# mTLS Configuration
+mtls:
+  enabled: true
+  client-cert-header: X-Client-Cert-DN
+  trusted-ca: ${MTLS_TRUSTED_CA:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,openapi
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+    shutdown:
+      enabled: false
+  health:
+    defaults:
+      enabled: true
+  # Graceful shutdown
+  shutdown: graceful
+
+# OpenAPI/Swagger Documentation (LV-06)
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+  packages-to-scan: com.example.orchestrator.api,com.example.orchestrator.model.router
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
+  version: ${project.version:0.0.1-SNAPSHOT}
+  title: Java Companion Orchestrator API
+  description: |
+    REST API for the Java Companion Orchestrator - a CLI tool that generates
+    production-ready Spring Boot REST API projects from natural language descriptions,
+    with built-in security scanning, testing, and auto-fixing.
+  contact:
+    name: Java Companion Orchestrator Team
+    url: https://github.com/example/java-companion
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+# Rate limiting configuration (H-12) - using Resilience4j
+resilience4j:
+  ratelimiter:
+    enabled: true
+    instances:
+      api:
+        limit-for-period: 100
+        limit-refresh-period: 60
+        timeout-duration: 5000
+      actuator:
+        limit-for-period: 200
+        limit-refresh-period: 60
+        timeout-duration: 5000
+      health:
+        limit-for-period: 500
+        limit-refresh-period: 60
+        timeout-duration: 5000
+
+orchestrator:
+  version: ${project.version:0.0.1-SNAPSHOT}
+  api-key: ${ORCHESTRATOR_API_KEY:}
+  api:
+    min-compatible-client-version: "0.0.1"
+    version-endpoint: "/api/version"
+  model-router:
+    default-provider: nvidia
+    timeout-seconds: 60
+    max-retries: 3
+    retry-delay-ms: 1000
+    default-profile: general
+
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5
+      timeout-seconds: 30
+      half-open-requests: 3
+
+    cost-tracking:
+      enabled: true
+      budget-per-task-usd: 0.50
+      budget-per-day-usd: 10.0
+      alert-threshold-percent: 80.0
+
+    providers:
+      nvidia:
+        enabled: true
+        base-url: https://integrate.api.nvidia.com/v1
+        api-key: ${NVIDIA_API_KEY:}
+        models:
+          planner: nvidia/nemotron-3-ultra
+          coder: nvidia/nemotron-3-ultra
+          reviewer: nvidia/nemotron-3-ultra
+          security: nvidia/nemotron-3-ultra
+          docs: nvidia/nemotron-3-ultra
+          general: nvidia/nemotron-3-ultra
+        rate-limit-rpm: 60
+        timeout-seconds: 60
+        supports-streaming: true
+
+      openrouter:
+        enabled: false
+        base-url: https://openrouter.ai/api/v1
+        api-key: ${OPENROUTER_API_KEY:}
+        models:
+          planner: nvidia/nemotron-3-ultra-550b-a55b
+          coder: poolside/laguna-s-2.1:free
+          reviewer: nvidia/nemotron-3-ultra-550b-a55b:free
+          security: nvidia/nemotron-3-ultra-550b-a55b:free
+          docs: cohere/north-mini-code:free
+          general: z-ai/glm-5.2:free
+        rate-limit-rpm: 60
+        timeout-seconds: 60
+        supports-streaming: true
+
+      ollama:
+        enabled: false
+        base-url: http://localhost:11434/v1
+        models:
+          codellama: codellama:13b
+          llama3: llama3:8b
+        rate-limit-rpm: 30
+        timeout-seconds: 120
+        supports-streaming: true
+
+      kaggle:
+        # Stub provider: returns UnsupportedOperationException when called.
+        enabled: false
+        base-url: https://www.kaggle.com/api/v1
+        api-key: ${KAGGLE_API_KEY:}
+
+    profiles:
+      planner:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are an expert software architect.
+          Create detailed, actionable implementation plans.
+        enabled: true
+        fallback-profiles:
+          - coder
+          - general
+
+      coder:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.2
+        max-tokens: 8192
+        top-p: 0.95
+        system-prompt: >
+          You are an expert software engineer.
+          Write clean, correct, production-ready code.
+          Modify existing files when requested.
+          Do not create duplicate classes or unnecessary files.
+        enabled: true
+        fallback-profiles:
+          - reviewer
+          - general
+
+      reviewer:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are a senior code reviewer.
+          Find bugs, regressions, security issues, and suggest improvements.
+        enabled: true
+        fallback-profiles:
+          - security_reasoning
+          - general
+
+      security_reasoning:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.0
+        max-tokens: 4096
+        top-p: 1.0
+        system-prompt: >
+          You are a security expert.
+          Find vulnerabilities, injection flaws, security anti-patterns,
+          exposed secrets, unsafe configuration, and insecure dependencies.
+          Focus on context safety and aggressive scanning for security issues.
+        enabled: true
+        fallback-profiles:
+          - reviewer
+          - general
+
+      documentation:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.3
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are a technical writer.
+          Create clear, accurate, concise technical documentation.
+        enabled: true
+        fallback-profiles:
+          - general
+
+      general:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.5
+        max-tokens: 4096
+        top-p: 0.95
+        system-prompt: >
+          You are a helpful AI assistant for software development tasks.
+          Follow the provided project requirements precisely.
+        enabled: true
+        fallback-profiles: []
+
+  pipeline:
+    # Project root. Defaults to the current working directory.
+    target-root: ${PIPELINE_TARGET_ROOT:.}
+
+    # These can be changed for every task without modifying this YAML.
+    source-file: ${PIPELINE_SOURCE_FILE}
+    test-file: ${PIPELINE_TEST_FILE}
+
+    # Semgrep executable. Use "semgrep" when available on PATH.
+    semgrep-path: ${SEMGREP_PATH:semgrep}
+
+    max-rounds: 5
+
+    # These are also task-specific.
+    package-name: ${PIPELINE_PACKAGE_NAME}
+    class-name: ${PIPELINE_CLASS_NAME}
+
+    task-description: >
+      You are EDITING an existing source file, not creating a new one.
+
+      The pipeline provides:
+      - target-root
+      - source-file
+      - test-file
+      - package-name
+      - class-name
+
+      TASK:
+      Modify the existing source file according to the requested task.
+
+      STRICT REQUIREMENTS:
+      - The source file already exists.
+      - Do NOT create a duplicate source class.
+      - Do NOT rename the existing class unless explicitly requested.
+      - Do NOT remove existing functionality unless explicitly requested.
+      - Do NOT change the behavior of existing endpoints or methods unless
+        explicitly requested.
+      - Preserve existing imports whenever possible.
+      - Add only imports that are actually required.
+      - Keep the existing package declaration unchanged unless explicitly requested.
+      - Follow the existing project's coding style.
+      - Keep changes minimal and focused on the requested task.
+      - If a test file is provided, update or extend the existing tests when
+        required by the task.
+      - Do NOT replace the entire test suite unnecessarily.
+      - Ensure the resulting source compiles.
+      - Ensure tests remain valid.
+      - Return the COMPLETE modified source file content, not a snippet.
+
+

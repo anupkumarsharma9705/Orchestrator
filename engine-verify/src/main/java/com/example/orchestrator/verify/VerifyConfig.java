@@ -1,7 +1,6 @@
 package com.example.orchestrator.verify;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
@@ -9,11 +8,10 @@ import java.util.Map;
 /**
  * Configuration properties for the Verifier.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.verify")
 public class VerifyConfig {
 
-    private String sandboxImage = "orchestrator/sandbox:latest";
+    private String sandboxImage = "orchestrator/sandbox:1.0.0";
     private int defaultTimeoutSeconds = 300;
     private int maxParallelScanners = 4;
     private List<String> enabledScanners = List.of("compile", "test", "coverage", "spotbugs", "checkstyle", "semgrep", "depcheck", "trivy", "secrets");

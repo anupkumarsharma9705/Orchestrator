@@ -38,10 +38,14 @@ public class GenerateCommand implements Callable<Integer> {
     @Option(names = {"-n", "--name"}, description = "Project name (required)", required = true)
     private String name;
 
-    @Option(names = {"-d", "--description"}, description = "Natural language description of the project", required = true)
+    @Option(names = {"-d", "--description"}, description = "Natural language description of the project")
     private String description;
 
-    @Option(names = {"--project-root"}, description = "Root directory for the project (default: current directory)")
+    @Parameters(index = "0", arity = "0..1", paramLabel = "<description>",
+            description = "Natural language description of the project")
+    private String positionalDescription;
+
+    @Option(names = {"--project-root"}, description = "Parent directory that will contain the generated project directory (default: current directory)")
     private String projectRoot;
 
     @Option(names = {"--non-interactive"}, description = "Run in non-interactive mode (use defaults, auto-approve)")
@@ -88,6 +92,15 @@ public class GenerateCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
+        String resolvedDescription = description != null && !description.isBlank()
+                ? description
+                : positionalDescription;
+        if (resolvedDescription == null || resolvedDescription.isBlank()) {
+            System.err.println(Ansi.error(" Missing required option: '--description' or a positional description"));
+            System.err.println(Ansi.dim(" Example: companion generate \"REST CRUD for Book\" --name library"));
+            return 2;
+        }
+
         // Validate project root
         Path root = resolveProjectRoot();
         if (!Files.exists(root)) {
@@ -103,24 +116,26 @@ public class GenerateCommand implements Callable<Integer> {
         CliConfig config = new ConfigManager().load();
 
         // Initialize components
-        OrchestratorClient client = new OrchestratorClient(config);
         OutputFormatter formatter = new OutputFormatter(outputFormat);
         ClarifierPrompter prompter = new ClarifierPrompter(nonInteractive);
         PlanReviewer planReviewer = new PlanReviewer(nonInteractive);
         ProgressRenderer progress = new ProgressRenderer();
 
         System.out.println(Ansi.bold(Ansi.CYAN + "🚀 Generating project: " + name));
-        System.out.println(Ansi.dim("Description: " + description));
+        System.out.println(Ansi.dim("Description: " + resolvedDescription));
         System.out.println(Ansi.dim("Project root: " + root.toAbsolutePath()));
         if (offline) {
             System.out.println(Ansi.dim("Mode: OFFLINE (no server required)"));
         }
         System.out.println();
 
-        // Offline mode - generate locally without server
+        // Offline mode - generate locally without server. This is checked before
+        // constructing the HTTPS client so that --offline works with no config.
         if (offline) {
-            return runOfflineGeneration(config, formatter, root);
+            return runOfflineGeneration(config, formatter, root, resolvedDescription);
         }
+
+        OrchestratorClient client = new OrchestratorClient(config);
 
         // Step 1: Health check
         System.out.println(Ansi.info(" Checking server health..."));
@@ -142,7 +157,7 @@ public class GenerateCommand implements Callable<Integer> {
         System.out.println(Ansi.info(" Submitting task for clarification..."));
         OrchestratorClient.CreateTaskRequest taskRequest = new OrchestratorClient.CreateTaskRequest(
             name, // projectId
-            description, // request
+            resolvedDescription, // request
             config.defaultProject().isEmpty() ? "cli-user" : config.defaultProject() // requester
         );
 
@@ -174,7 +189,7 @@ public class GenerateCommand implements Callable<Integer> {
         return 0;
     }
 
-    private Integer runOfflineGeneration(CliConfig config, OutputFormatter formatter, Path root) throws Exception {
+    private Integer runOfflineGeneration(CliConfig config, OutputFormatter formatter, Path root, String resolvedDescription) throws Exception {
         // Initialize offline mode service (lazy init to avoid server dependency)
         OfflineModeService offlineModeService = new OfflineModeService(
             new com.example.orchestrator.templates.TemplateEngine()
@@ -184,13 +199,13 @@ public class GenerateCommand implements Callable<Integer> {
         System.out.println();
 
         OfflineModeService.OfflineGenerationResult result =
-            offlineModeService.generateOffline(name, description, root, basePackage, dryRun);
+            offlineModeService.generateOffline(name, resolvedDescription, root, basePackage, dryRun);
 
         if (result.success()) {
             System.out.println();
             System.out.println(Ansi.success(" ✓ " + result.message()));
             System.out.println();
-            System.out.println(Ansi.bold("Files that would be generated:"));
+            System.out.println(Ansi.bold(dryRun ? "Files that would be generated:" : "Generated files:"));
             for (String file : result.files()) {
                 System.out.println(Ansi.dim("  " + file));
             }

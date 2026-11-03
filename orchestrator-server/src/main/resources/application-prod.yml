@@ -1,0 +1,235 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/orchestrator}
+    username: ${SPRING_DATASOURCE_USERNAME:companion}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    locations: classpath:db/orchestrator/migration
+    baseline-on-migrate: true
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      embedding:
+        model: text-embedding-3-small
+        dimensions: 1536
+      chat:
+        options:
+          model: gpt-4o-mini
+          temperature: 0.2
+          max-tokens: 8192
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  health:
+    defaults:
+      enabled: true
+
+orchestrator:
+  api-key: ${ORCHESTRATOR_API_KEY:}
+  model-router:
+    default-provider: nvidia
+    timeout-seconds: 60
+    max-retries: 3
+    retry-delay-ms: 1000
+    default-profile: general
+
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5
+      timeout-seconds: 30
+      half-open-requests: 3
+
+    cost-tracking:
+      enabled: true
+      budget-per-task-usd: 0.50
+      budget-per-day-usd: 10.0
+      alert-threshold-percent: 80.0
+
+    providers:
+      nvidia:
+        enabled: true
+        base-url: https://integrate.api.nvidia.com/v1
+        api-key: ${NVIDIA_API_KEY:}
+        models:
+          planner: nvidia/nemotron-3-ultra
+          coder: nvidia/nemotron-3-ultra
+          reviewer: nvidia/nemotron-3-ultra
+          security: nvidia/nemotron-3-ultra
+          docs: nvidia/nemotron-3-ultra
+          general: nvidia/nemotron-3-ultra
+        rate-limit-rpm: 60
+        timeout-seconds: 60
+        supports-streaming: true
+
+      openrouter:
+        enabled: false
+        base-url: https://openrouter.ai/api/v1
+        api-key: ""
+        models:
+          planner: nvidia/nemotron-3-ultra-550b-a55b
+          coder: nvidia/nemotron-3-ultra-550b-a55b
+          reviewer: nvidia/nemotron-3-ultra-550b-a55b
+          security: nvidia/nemotron-3-ultra-550b-a55b
+          docs: nvidia/nemotron-3-ultra-550b-a55b
+          general: nvidia/nemotron-3-ultra-550b-a55b
+        rate-limit-rpm: 60
+        timeout-seconds: 60
+        supports-streaming: true
+
+      ollama:
+        enabled: false
+        base-url: http://localhost:11434/v1
+        models:
+          codellama: codellama:13b
+          llama3: llama3:8b
+        rate-limit-rpm: 30
+        timeout-seconds: 120
+        supports-streaming: true
+
+      kaggle:
+        enabled: false
+        base-url: https://www.kaggle.com/api/v1
+        api-key: ""
+
+    profiles:
+      planner:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are an expert software architect.
+          Create detailed, actionable implementation plans.
+        enabled: true
+        fallback-profiles:
+          - coder
+          - general
+
+      coder:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.2
+        max-tokens: 8192
+        top-p: 0.95
+        system-prompt: >
+          You are an expert software engineer.
+          Write clean, correct, production-ready code.
+          Modify existing files when requested.
+          Do not create duplicate classes or unnecessary files.
+        enabled: true
+        fallback-profiles:
+          - reviewer
+          - general
+
+      reviewer:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.1
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are a senior code reviewer.
+          Find bugs, regressions, security issues, and suggest improvements.
+        enabled: true
+        fallback-profiles:
+          - security_reasoning
+          - general
+
+      security_reasoning:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.0
+        max-tokens: 4096
+        top-p: 1.0
+        system-prompt: >
+          You are a security expert.
+          Find vulnerabilities, injection flaws, security anti-patterns,
+          exposed secrets, unsafe configuration, and insecure dependencies.
+          Focus on context safety and aggressive scanning for security issues.
+        enabled: true
+        fallback-profiles:
+          - reviewer
+          - general
+
+      documentation:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.3
+        max-tokens: 4096
+        top-p: 0.9
+        system-prompt: >
+          You are a technical writer.
+          Create clear, accurate, concise technical documentation.
+        enabled: true
+        fallback-profiles:
+          - general
+
+      general:
+        provider: nvidia
+        model: nvidia/nemotron-3-ultra
+        temperature: 0.5
+        max-tokens: 4096
+        top-p: 0.95
+        system-prompt: >
+          You are a helpful AI assistant for software development tasks.
+          Follow the provided project requirements precisely.
+        enabled: true
+        fallback-profiles: []
+
+  pipeline:
+    target-root: ${PIPELINE_TARGET_ROOT:.}
+    source-file: ${PIPELINE_SOURCE_FILE}
+    test-file: ${PIPELINE_TEST_FILE}
+    semgrep-path: ${SEMGREP_PATH:semgrep}
+    max-rounds: 5
+    package-name: ${PIPELINE_PACKAGE_NAME}
+    class-name: ${PIPELINE_CLASS_NAME}
+
+    task-description: >
+      You are EDITING an existing source file, not creating a new one.
+
+      The pipeline provides:
+      - target-root
+      - source-file
+      - test-file
+      - package-name
+      - class-name
+
+      TASK:
+      Modify the existing source file according to the requested task.
+
+      STRICT REQUIREMENTS:
+      - The source file already exists.
+      - Do NOT create a duplicate source class.
+      - Do NOT rename the existing class unless explicitly requested.
+      - Do NOT remove existing functionality unless explicitly requested.
+      - Do NOT change the behavior of existing endpoints or methods unless
+        explicitly requested.
+      - Preserve existing imports whenever possible.
+      - Add only imports that are actually required.
+      - Keep the existing package declaration unchanged unless explicitly requested.
+      - Follow the existing project's coding style.
+      - Keep changes minimal and focused on the requested task.
+      - If a test file is provided, update or extend the existing tests when
+        required by the task.
+      - Do NOT replace the entire test suite unnecessarily.
+      - Ensure the resulting source compiles.
+      - Ensure tests remain valid.
+      - Return the COMPLETE modified source file content, not a snippet.

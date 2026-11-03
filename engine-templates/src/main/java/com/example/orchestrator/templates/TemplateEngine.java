@@ -137,7 +137,7 @@ public class TemplateEngine {
         Map<String, String> vars = createCommonVariables(project);
         vars.put("project.description", "Spring Boot REST API for " + project.name());
         vars.put("java.version", "21");
-        vars.put("spring.boot.version", "3.4.1");
+        vars.put("spring.boot.version", "4.1.1");
         vars.put("maven.compiler.source", "21");
         vars.put("maven.compiler.target", "21");
 
@@ -169,8 +169,8 @@ public class TemplateEngine {
         vars.put("datasource.username", "${DB_USERNAME:postgres}");
         vars.put("datasource.password", "${DB_PASSWORD:postgres}");
         vars.put("jpa.ddl-auto", "validate");
-        vars.put("jwt.secret", "${JWT_SECRET:change-me-in-production}");
-        vars.put("jwt.expiration", "86400000"); // 24 hours
+        vars.put("jwt.secret", "${JWT_SECRET:}");
+        vars.put("jwt.expiration", "${JWT_EXPIRATION_MS:86400000}"); // 24 hours
 
         generateFile("application.yml", targetFile, vars);
     }
@@ -180,7 +180,6 @@ public class TemplateEngine {
      */
     private void generateDockerfile(Project project, Path targetDir) throws IOException {
         Map<String, String> vars = createCommonVariables(project);
-        vars.put("jarName", project.name().toLowerCase() + ".jar");
 
         generateFile("Dockerfile", targetDir.resolve("Dockerfile"), vars);
     }
@@ -367,6 +366,7 @@ public class TemplateEngine {
         vars.put("basePackage", project.basePackage());
         vars.put("className", project.className());
         vars.put("artifactId", project.name().toLowerCase().replace(" ", "-"));
+        vars.put("serviceName", project.name().toLowerCase());
         vars.put("groupId", "com.example");
         vars.put("version", "0.0.1-SNAPSHOT");
         vars.put("year", String.valueOf(java.time.Year.now().getValue()));

@@ -1,0 +1,55 @@
+[
+  {
+    "className": "com.example.orchestrator.cli.config.CliConfig",
+    "fields": [
+      "serverUrl",
+      "defaultProject",
+      "outputFormat",
+      "timeoutSeconds",
+      "apiKey",
+      "logLevel",
+      "noColor",
+      "ssl"
+    ]
+  },
+  {
+    "className": "com.example.orchestrator.cli.config.CliConfig$SslConfig",
+    "fields": [
+      "enabled",
+      "trustStore",
+      "trustStorePassword",
+      "trustStoreType",
+      "verifyHostname",
+      "mtlsEnabled",
+      "keyStore",
+      "keyStorePassword",
+      "keyStoreType",
+      "keyAlias"
+    ]
+  },
+  {
+    "className": "com.example.orchestrator.cli.client.OrchestratorClient$VersionResponse",
+    "fields": [
+      "apiVersion",
+      "buildVersion",
+      "buildTime",
+      "buildTimestamp"
+    ]
+  },
+  {
+    "className": "com.example.orchestrator.cli.client.OrchestratorClient$ApiVersion",
+    "fields": [
+      "clientVersion",
+      "serverVersion",
+      "compatible"
+    ]
+  },
+  {
+    "className": "com.example.orchestrator.cli.client.OrchestratorClient$HealthResponse",
+    "fields": [
+      "status",
+      "details",
+      "components"
+    ]
+  }
+]

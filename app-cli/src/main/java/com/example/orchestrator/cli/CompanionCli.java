@@ -3,9 +3,17 @@ package com.example.orchestrator.cli;
 import com.example.orchestrator.cli.commands.ConfigCommand;
 import com.example.orchestrator.cli.commands.DoctorCommand;
 import com.example.orchestrator.cli.commands.GenerateCommand;
+import com.example.orchestrator.cli.commands.PinCommand;
+import com.example.orchestrator.cli.commands.PinGenerateCommand;
+import com.example.orchestrator.cli.commands.PinVerifyCommand;
+import com.example.orchestrator.cli.commands.PinListCommand;
+import com.example.orchestrator.cli.commands.PinAddCommand;
+import com.example.orchestrator.cli.commands.PinRemoveCommand;
 import com.example.orchestrator.cli.commands.ProjectCommand;
+import com.example.orchestrator.cli.commands.SelfUpdateCommand;
 import com.example.orchestrator.cli.commands.TaskCommand;
 import com.example.orchestrator.cli.commands.VerifyCommand;
+import com.example.orchestrator.cli.util.Ansi;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -30,16 +38,16 @@ import java.util.concurrent.Callable;
     version = "0.0.1-SNAPSHOT",
     mixinStandardHelpOptions = true,
     description = {
-        "A CLI tool that generates a production-ready Spring Boot REST API project",
-        "from a natural language description, with built-in security scanning,",
-        "testing, and auto-fixing.",
+        "Generate Spring Boot REST API projects from natural language descriptions,",
+        "with secure defaults, security scanning, testing, and auto-fixing.",
         "",
         "Usage examples:",
         "  companion generate \"REST CRUD for Book entity\" --name library",
+        "  companion generate \"Simple TODO API\" --name todo --offline",
         "  companion verify ./my-spring-project",
         "  companion doctor",
         "  companion task get TASK-ABC123",
-        "  companion config set serverUrl http://localhost:8080"
+        "  companion config set serverUrl https://localhost:8443"
     },
     subcommands = {
         GenerateCommand.class,
@@ -47,7 +55,9 @@ import java.util.concurrent.Callable;
         DoctorCommand.class,
         ProjectCommand.class,
         TaskCommand.class,
-        ConfigCommand.class
+        ConfigCommand.class,
+        SelfUpdateCommand.class,
+        PinCommand.class
     }
 )
 public class CompanionCli implements Callable<Integer> {
@@ -64,9 +74,21 @@ public class CompanionCli implements Callable<Integer> {
     private ConfigurableApplicationContext springContext;
 
     public static void main(String[] args) {
-        int exitCode = new CommandLine(new CompanionCli())
-            .setCaseInsensitiveEnumValuesAllowed(true)
-            .execute(args);
+        CommandLine commandLine = new CommandLine(new CompanionCli())
+            .setCaseInsensitiveEnumValuesAllowed(true);
+
+        // Configuration and connectivity errors are user-facing; do not dump a
+        // stack trace unless the developer explicitly asks for it.
+        commandLine.setExecutionExceptionHandler((ex, cmd, parseResult) -> {
+            String message = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+            System.err.println(Ansi.error(" " + message));
+            if ("1".equals(System.getenv("COMPANION_DEBUG"))) {
+                ex.printStackTrace(System.err);
+            }
+            return 1;
+        });
+
+        int exitCode = commandLine.execute(args);
         System.exit(exitCode);
     }
 

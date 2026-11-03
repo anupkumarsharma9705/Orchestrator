@@ -93,12 +93,13 @@ public record CliConfig(
 
     /**
      * SSL/TLS configuration for secure communication with the orchestrator server.
+     * Supports both server verification (trust store) and client authentication (mTLS).
      */
     public record SslConfig(
         /** Enable SSL/TLS for server communication */
         Boolean enabled,
 
-        /** Path to trust store (JKS or PKCS12) */
+        /** Path to trust store (JKS or PKCS12) - for server certificate verification */
         String trustStore,
 
         /** Trust store password */
@@ -108,15 +109,51 @@ public record CliConfig(
         String trustStoreType,
 
         /** Verify hostname against certificate (disable for self-signed dev certs) */
-        Boolean verifyHostname
+        Boolean verifyHostname,
+
+        // mTLS Client Authentication
+        /** Enable mutual TLS (client certificate authentication) */
+        Boolean mtlsEnabled,
+
+        /** Path to client key store (JKS or PKCS12) containing client certificate and private key */
+        String keyStore,
+
+        /** Key store password */
+        String keyStorePassword,
+
+        /** Key store type (JKS, PKCS12) */
+        String keyStoreType,
+
+        /** Client certificate alias in key store */
+        String keyAlias
     ) {
         public static SslConfig defaults() {
             return new SslConfig(
                 true,
-                "classpath:certs/truststore.p12",
-                "changeit",
+                "",     // Configured by scripts/dev-up or explicitly by the user
+                "",     // Must be supplied via config file or env; never shipped
                 "PKCS12",
-                false  // Disable hostname verification for self-signed dev certs
+                true,   // Always verify the server certificate hostname
+                false,  // mTLS disabled by default
+                "",     // No client key store by default
+                "",     // No key store password
+                "PKCS12",
+                ""      // No key alias
+            );
+        }
+
+        public static SslConfig mtlsDefaults() {
+            return new SslConfig(
+                true,
+                "",
+                "",
+                "PKCS12",
+                true,
+                true,   // mTLS enabled
+                "",     // Configured by the dev bootstrap or config command
+                "",
+                "PKCS12",
+                "client"
             );
         }
     }

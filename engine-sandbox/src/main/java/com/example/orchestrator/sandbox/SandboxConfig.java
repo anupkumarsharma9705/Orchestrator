@@ -6,10 +6,10 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -21,7 +21,6 @@ import java.util.Set;
  * - Resource limits with validation
  * - Network isolation by default
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.sandbox")
 @Validated
 public class SandboxConfig {
@@ -29,7 +28,7 @@ public class SandboxConfig {
     // ===== Docker Image Configuration =====
     
     @NotBlank
-    private String dockerImage = "orchestrator/sandbox:latest";
+    private String dockerImage = "orchestrator/sandbox:1.0.0";
 
     /** 
      * Allowed Docker registries. Empty = allow all (NOT recommended for production).
@@ -64,7 +63,14 @@ public class SandboxConfig {
     // ===== Docker Socket/Host Configuration =====
     
     @NotBlank
-    private String dockerHost = "unix:///var/run/docker.sock";
+    private String dockerHost = defaultDockerHost();
+
+    private static String defaultDockerHost() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        return os.contains("win")
+                ? "npipe:////./pipe/docker_engine"
+                : "unix:///var/run/docker.sock";
+    }
 
     /** 
      * Allowed Docker socket paths. Prevents socket hijacking.
@@ -73,13 +79,21 @@ public class SandboxConfig {
      * TCP: ["tcp://localhost:2376"] (requires TLS)
      */
     private List<String> allowedDockerHosts = List.of(
-        "unix:///var/run/docker.sock",
-        "unix:///run/docker.sock",
+        "tcp://localhost:2376",
         "npipe:////./pipe/docker_engine"
     );
 
     /** Require TLS for TCP Docker connections */
     private boolean requireTlsForTcp = true;
+
+    /** Path to client certificate for TLS authentication */
+    private String clientCertPath = "";
+
+    /** Path to client private key for TLS authentication */
+    private String clientKeyPath = "";
+
+    /** Path to CA certificate for verifying Docker daemon */
+    private String caCertPath = "";
 
     // ===== Resource Limits =====
     
@@ -222,6 +236,15 @@ public class SandboxConfig {
     public String getSeccompProfile() { return seccompProfile; }
     public void setSeccompProfile(String seccompProfile) { this.seccompProfile = seccompProfile; }
 
+    public String getClientCertPath() { return clientCertPath; }
+    public void setClientCertPath(String clientCertPath) { this.clientCertPath = clientCertPath; }
+
+    public String getClientKeyPath() { return clientKeyPath; }
+    public void setClientKeyPath(String clientKeyPath) { this.clientKeyPath = clientKeyPath; }
+
+    public String getCaCertPath() { return caCertPath; }
+    public void setCaCertPath(String caCertPath) { this.caCertPath = caCertPath; }
+
     // ===== Validation Methods =====
 
     /**
@@ -292,6 +315,14 @@ public class SandboxConfig {
             throw new IllegalArgumentException("Docker host not allowed: " + host + ". Allowed: " + allowedDockerHosts);
         }
 
+        // Validate TLS configuration for TCP connections
+        if (host.startsWith("tcp://") && requireTlsForTcp) {
+            if (clientCertPath.isBlank() || clientKeyPath.isBlank() || caCertPath.isBlank()) {
+                throw new IllegalArgumentException("TLS certificates required for TCP Docker connections. " +
+                    "Set clientCertPath, clientKeyPath, and caCertPath");
+            }
+        }
+
         // Validate socket path exists and is accessible (Unix/npipe)
         if (host.startsWith("unix://")) {
             String socketPath = host.substring("unix://".length());
@@ -311,11 +342,11 @@ public class SandboxConfig {
      * @throws IllegalStateException if configuration is invalid
      */
     public void validateConfiguration() {
+        // Validate default image FIRST - this catches image policy violations early
+        validateImage(dockerImage);
+
         // Validate Docker host
         validateDockerHost(dockerHost);
-
-        // Validate default image
-        validateImage(dockerImage);
 
         // Validate resource limits
         if (defaultTimeoutSeconds > maxTimeoutSeconds) {

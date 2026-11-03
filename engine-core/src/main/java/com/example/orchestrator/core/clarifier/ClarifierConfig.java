@@ -1,12 +1,10 @@
 package com.example.orchestrator.core.clarifier;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * Configuration properties for the Clarifier.
  */
-@Component
 @ConfigurationProperties(prefix = "orchestrator.clarifier")
 public class ClarifierConfig {
 
