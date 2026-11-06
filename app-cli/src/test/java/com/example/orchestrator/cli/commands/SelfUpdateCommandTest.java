@@ -1,12 +1,18 @@
 package com.example.orchestrator.cli.commands;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Constructor;
+import java.net.URI;
+import java.nio.file.Path;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Ensures self-update refuses to install a release that does not publish a
@@ -46,6 +52,47 @@ class SelfUpdateCommandTest {
         Object resolved = invokeResolve(command, release, asset);
         assertNotNull(resolved);
         org.junit.jupiter.api.Assertions.assertEquals(digest, resolved);
+    }
+
+    @Test
+    void rejectsPlainHttpUpdateUrls() {
+        assertThrows(IllegalArgumentException.class,
+            () -> SelfUpdateCommand.requireTrustedUpdateUri("http://github.com/owner/repo"));
+    }
+
+    @Test
+    void rejectsUntrustedUpdateHosts() {
+        assertThrows(IllegalArgumentException.class,
+            () -> SelfUpdateCommand.requireTrustedUpdateUri("https://evil.example/companion.jar"));
+        assertThrows(IllegalArgumentException.class,
+            () -> SelfUpdateCommand.requireTrustedUpdateUri("https://github.com.evil.example/companion.jar"));
+    }
+
+    @Test
+    void acceptsGitHubApiAndReleaseHosts() {
+        assertTrue(SelfUpdateCommand.isTrustedUpdateUri(
+            URI.create("https://api.github.com/repos/owner/repo/releases/latest")));
+        assertTrue(SelfUpdateCommand.isTrustedUpdateUri(
+            URI.create("https://github.com/owner/repo/releases/download/v1/companion.jar")));
+        assertTrue(SelfUpdateCommand.isTrustedUpdateUri(
+            URI.create("https://release-assets.githubusercontent.com/file")));
+        assertFalse(SelfUpdateCommand.isTrustedUpdateUri(
+            URI.create("http://api.github.com/repos/owner/repo/releases/latest")));
+    }
+
+    @Test
+    void validatesRepositoryCoordinates() {
+        assertTrue(SelfUpdateCommand.isValidRepository("owner/repo"));
+        assertFalse(SelfUpdateCommand.isValidRepository("owner/repo/extra"));
+        assertFalse(SelfUpdateCommand.isValidRepository("../repo"));
+        assertFalse(SelfUpdateCommand.isValidRepository("owner"));
+    }
+
+    @Test
+    void trustStoreRequiresPasswordAndFailsClosed(@TempDir Path tempDir) {
+        Path store = tempDir.resolve("truststore.p12");
+        assertThrows(IllegalArgumentException.class,
+            () -> SelfUpdateCommand.buildTrustStoreContext(store, "PKCS12", null));
     }
 
     private Object newRelease(List<?> assets) throws Exception {

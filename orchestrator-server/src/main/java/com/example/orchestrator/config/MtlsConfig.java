@@ -16,10 +16,6 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import jakarta.servlet.Filter;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.security.cert.X509Certificate;
 import java.util.List;
@@ -27,20 +23,35 @@ import java.util.Optional;
 
 /**
  * mTLS Configuration and Certificate Filter.
- * 
- * Validates client certificates and extracts identity for authorization.
- * Works with Spring Security to provide certificate-based authentication.
+ *
+ * <p>Validates client certificates and extracts identity for authorization.
+ * Works with Spring Security to provide certificate-based authentication.</p>
+ *
+ * <p>Some deployments terminate TLS at a reverse proxy and forward the client
+ * certificate DN in a header. A header is only trusted when
+ * {@code mtls.trust-proxy-header=true}; otherwise any caller could inject an
+ * arbitrary identity. The flag must remain disabled unless every request
+ * reaches this server through a proxy that strips and rewrites the header.</p>
  */
 @Configuration
 public class MtlsConfig {
 
     private static final Logger log = LoggerFactory.getLogger(MtlsConfig.class);
 
-    @Value("${mtls.enabled:true}")
-    private boolean mtlsEnabled;
+    private static final int MAX_DN_LENGTH = 1024;
 
-    @Value("${mtls.client-cert-header:X-Client-Cert-DN}")
-    private String clientCertHeader;
+    private final boolean mtlsEnabled;
+    private final String clientCertHeader;
+    private final boolean trustProxyHeader;
+
+    public MtlsConfig(
+            @Value("${mtls.enabled:true}") boolean mtlsEnabled,
+            @Value("${mtls.client-cert-header:X-Client-Cert-DN}") String clientCertHeader,
+            @Value("${mtls.trust-proxy-header:false}") boolean trustProxyHeader) {
+        this.mtlsEnabled = mtlsEnabled;
+        this.clientCertHeader = clientCertHeader;
+        this.trustProxyHeader = trustProxyHeader;
+    }
 
     @Bean
     public FilterRegistrationBean<ClientCertificateFilter> clientCertificateFilter() {
@@ -69,36 +80,55 @@ public class MtlsConfig {
 
             // Try to get certificate from request attribute (set by Tomcat/Undertow)
             X509Certificate[] certs = (X509Certificate[]) request.getAttribute("jakarta.servlet.request.X509Certificate");
-            
+
             if (certs == null || certs.length == 0) {
-                // Try header (set by reverse proxy)
-                String certHeader = request.getHeader(clientCertHeader);
-                if (certHeader != null && !certHeader.isBlank()) {
-                    log.debug("Client certificate DN from header: {}", certHeader);
-                    setAuthenticationFromDN(certHeader);
-                } else {
-                    log.warn("No client certificate presented for mTLS");
-                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.getWriter().write("{\"error\":\"Client certificate required\"}");
+                if (!trustProxyHeader) {
+                    // Never trust a client-controlled identity header. Log only
+                    // that the header was present, not its value, to avoid
+                    // reflecting attacker-controlled data into logs.
+                    if (request.getHeader(clientCertHeader) != null) {
+                        log.warn("Ignoring {} because mtls.trust-proxy-header is disabled",
+                            clientCertHeader);
+                    } else {
+                        log.warn("No client certificate presented for mTLS");
+                    }
+                    unauthorized(response, "Client certificate required");
                     return;
                 }
+
+                // Header is trusted only when the deployment explicitly enables
+                // proxy-header trust. The proxy must overwrite this header for
+                // every request; otherwise it remains spoofable.
+                String certHeader = request.getHeader(clientCertHeader);
+                if (certHeader == null || certHeader.isBlank()) {
+                    log.warn("No client certificate or proxy header presented for mTLS");
+                    unauthorized(response, "Client certificate required");
+                    return;
+                }
+                String subjectDn = certHeader.trim();
+                if (!isPlausibleDistinguishedName(subjectDn)) {
+                    log.warn("Rejected malformed client certificate DN header");
+                    unauthorized(response, "Client certificate identity is malformed");
+                    return;
+                }
+                log.debug("Client certificate DN from trusted proxy header");
+                setAuthenticationFromDN(subjectDn);
             } else {
                 X509Certificate clientCert = certs[0];
                 String subjectDN = clientCert.getSubjectX500Principal().getName();
                 log.debug("Client certificate DN: {}", subjectDN);
-                
+
                 // Validate certificate (check expiration, etc.)
                 try {
                     clientCert.checkValidity();
                 } catch (Exception e) {
                     log.warn("Client certificate validation failed: {}", e.getMessage());
-                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.getWriter().write("{\"error\":\"Client certificate validation failed\"}");
+                    unauthorized(response, "Client certificate validation failed");
                     return;
                 }
-                
+
                 setAuthenticationFromDN(subjectDN);
-                
+
                 // Store certificate in request for downstream use
                 request.setAttribute("clientCertificate", clientCert);
             }
@@ -106,10 +136,23 @@ public class MtlsConfig {
             filterChain.doFilter(request, response);
         }
 
+        private void unauthorized(HttpServletResponse response, String message) throws IOException {
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":\"" + message + "\"}");
+        }
+
+        private boolean isPlausibleDistinguishedName(String value) {
+            return value.length() <= MAX_DN_LENGTH
+                && value.indexOf('\n') < 0
+                && value.indexOf('\r') < 0
+                && value.contains("=");
+        }
+
         private void setAuthenticationFromDN(String subjectDN) {
             // Extract CN from DN
             String cn = extractCN(subjectDN);
-            
+
             // Create authentication with certificate DN as principal
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
                 subjectDN, // principal = full DN
@@ -125,7 +168,7 @@ public class MtlsConfig {
             String[] parts = subjectDN.split(",");
             for (String part : parts) {
                 String trimmed = part.trim();
-                if (trimmed.startsWith("CN=")) {
+                if (trimmed.regionMatches(true, 0, "CN=", 0, 3)) {
                     return trimmed.substring(3);
                 }
             }
@@ -136,7 +179,7 @@ public class MtlsConfig {
         protected boolean shouldNotFilter(HttpServletRequest request) {
             String path = request.getRequestURI();
             // Skip mTLS for public endpoints
-            return path.equals("/api/version") 
+            return path.equals("/api/version")
                 || path.startsWith("/actuator/health")
                 || path.startsWith("/actuator/info");
         }

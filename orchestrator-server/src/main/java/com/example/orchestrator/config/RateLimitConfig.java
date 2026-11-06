@@ -1,5 +1,6 @@
 package com.example.orchestrator.config;
 
+import com.example.orchestrator.security.ClientIpResolver;
 import io.github.resilience4j.ratelimiter.RateLimiter;
 import io.github.resilience4j.ratelimiter.RateLimiterConfig;
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
@@ -10,19 +11,14 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import jakarta.servlet.Filter;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.Map;
@@ -31,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Rate limiting configuration using Resilience4j.
  * H-12: Rate limiting for API endpoints.
- * 
+ *
  * Configuration via resilience4j.ratelimiter.* properties in application.yml.
  * Supports different limits per endpoint pattern.
  */
@@ -43,6 +39,14 @@ public class RateLimitConfig {
 
     private boolean enabled = true;
     private Map<String, RateLimiterConfigProperties> instances = new ConcurrentHashMap<>();
+
+    /**
+     * Forwarding headers are client-controlled unless a trusted proxy rewrites
+     * them. This mirrors the API-key filter so both layers key on the same
+     * client identity.
+     */
+    @Value("${orchestrator.security.trust-forwarded-headers:false}")
+    private boolean trustForwardedHeaders;
 
     // Nested configuration classes
     public static class RateLimiterConfigProperties {
@@ -63,6 +67,8 @@ public class RateLimitConfig {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public Map<String, RateLimiterConfigProperties> getInstances() { return instances; }
     public void setInstances(Map<String, RateLimiterConfigProperties> instances) { this.instances = instances; }
+    public boolean isTrustForwardedHeaders() { return trustForwardedHeaders; }
+    public void setTrustForwardedHeaders(boolean trustForwardedHeaders) { this.trustForwardedHeaders = trustForwardedHeaders; }
 
     // Internal registry and bucket cache
     private final RateLimiterRegistry registry = RateLimiterRegistry.ofDefaults();
@@ -74,13 +80,13 @@ public class RateLimitConfig {
         for (Map.Entry<String, RateLimiterConfigProperties> entry : instances.entrySet()) {
             String name = entry.getKey();
             RateLimiterConfigProperties props = entry.getValue();
-            
+
             RateLimiterConfig config = RateLimiterConfig.custom()
                 .limitForPeriod(props.getLimitForPeriod())
                 .limitRefreshPeriod(Duration.ofSeconds(props.getLimitRefreshPeriod()))
                 .timeoutDuration(Duration.ofMillis(props.getTimeoutDuration()))
                 .build();
-            
+
             registry.rateLimiter(name, config);
             log.info("Initialized rate limiter '{}': limit={}/{}s", name, props.getLimitForPeriod(), props.getLimitRefreshPeriod());
         }
@@ -106,14 +112,16 @@ public class RateLimitConfig {
 
     /**
      * Rate limiting filter using Resilience4j.
-     * Identifies clients by IP address (supports X-Forwarded-For).
+     * Identifies clients by IP address using the shared trusted-proxy rules.
      */
     public static class RateLimitFilter extends OncePerRequestFilter {
 
         private final RateLimitConfig config;
+        private final ClientIpResolver clientIpResolver;
 
         public RateLimitFilter(RateLimitConfig config) {
             this.config = config;
+            this.clientIpResolver = new ClientIpResolver(config.isTrustForwardedHeaders());
         }
 
         @Override
@@ -126,7 +134,7 @@ public class RateLimitConfig {
             }
 
             String path = request.getRequestURI();
-            String clientIp = getClientIp(request);
+            String clientIp = clientIpResolver.resolve(request);
 
             // Find matching rate limiter config (simple path prefix matching)
             String limiterName = findMatchingLimiter(path);
@@ -153,18 +161,6 @@ public class RateLimitConfig {
                 response.getWriter().write("{\"error\":\"Rate limit exceeded\",\"retryAfter\":" + getLimitRefreshPeriod(limiterName) + "}");
                 log.debug("Rate limited: IP={}, path={}, limiter={}", clientIp, path, limiterName);
             }
-        }
-
-        private String getClientIp(HttpServletRequest request) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                return xff.split(",")[0].trim();
-            }
-            String xri = request.getHeader("X-Real-IP");
-            if (xri != null && !xri.isBlank()) {
-                return xri;
-            }
-            return request.getRemoteAddr();
         }
 
         private String findMatchingLimiter(String path) {

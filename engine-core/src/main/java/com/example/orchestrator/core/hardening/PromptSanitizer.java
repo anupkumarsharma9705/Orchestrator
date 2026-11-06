@@ -14,11 +14,18 @@ import java.util.regex.Pattern;
 /**
  * Sanitizes prompts to defend against prompt injection attacks.
  * Strips instruction-like text, role manipulation attempts, and other malicious patterns.
+ *
+ * <p>Detection and sanitization share one normalized view of the input. Both
+ * {@link #sanitize(String)} and {@link #hasInjection(String)} call
+ * {@link #normalize(String)} and {@link #findInjectionMatches(String)}, so the
+ * two paths cannot drift apart when patterns change.</p>
  */
 @Component
 public class PromptSanitizer {
 
     private static final Logger log = LoggerFactory.getLogger(PromptSanitizer.class);
+
+    private static final int MAX_PROMPT_LENGTH = 100 * 1024;
 
     // Patterns that indicate prompt injection attempts
     private static final List<Pattern> INJECTION_PATTERNS = Arrays.asList(
@@ -26,31 +33,31 @@ public class PromptSanitizer {
         Pattern.compile("(?i)(ignore|forget|disregard)\\s+(previous|above|all)\\s+(instructions|prompts|rules)"),
         Pattern.compile("(?i)you\\s+are\\s+(now|now a|an?)\\s+"),
         Pattern.compile("(?i)(act|pretend|roleplay)\\s+as\\s+(an?|a)\\s+"),
-        
+
         // Instruction override
         Pattern.compile("(?i)(new|updated|changed)\\s+(instructions|rules|guidelines)"),
         Pattern.compile("(?i)ignore\\s+(the\\s+)?(system|user|assistant)\\s+(prompt|message|instruction)"),
         Pattern.compile("(?i)do\\s+not\\s+(follow|obey|listen)\\s+(to\\s+)?(the\\s+)?(previous|above)"),
-        
+
         // Data exfiltration
         Pattern.compile("(?i)(print|output|show|display|reveal)\\s+(the\\s+)?(system|hidden|secret|internal)\\s+(prompt|instruction|context)"),
         Pattern.compile("(?i)what\\s+(is|was)\\s+(your|the)\\s+(system|initial|original)\\s+(prompt|instruction)"),
-        
+
         // Chain of thought manipulation
         Pattern.compile("(?i)think\\s+step\\s+by\\s+step\\s*(and\\s+then)?\\s*(ignore|forget|disregard)"),
         Pattern.compile("(?i)let'?s\\s+(think|reason)\\s+(about|through)\\s+(this|it)\\s+(carefully|step by step)"),
-        
+
         // Delimiter confusion
         Pattern.compile("(?i)end\\s+(of|the)\\s+(prompt|instruction|context)"),
         Pattern.compile("(?i)(---|===|\\*\\*\\*)\\s*(end|stop|finish)"),
-        
+
         // Encoding attempts
         Pattern.compile("(?i)(base64|rot13|hex|url)\\s*(encode|decode)"),
-        
+
         // Jailbreak patterns
         Pattern.compile("(?i)(DAN|Do Anything Now|unrestricted|unfiltered|no rules)"),
         Pattern.compile("(?i)(developer|admin|root|sudo)\\s+mode"),
-        
+
         // Recursive/self-reference
         Pattern.compile("(?i)this\\s+(prompt|message|instruction)\\s+(contains|includes|has)\\s+(instructions|rules)")
     );
@@ -64,13 +71,17 @@ public class PromptSanitizer {
 
     /**
      * Sanitizes a prompt by removing potential injection patterns.
-     * 
-     * Fixes:
-     * - Applies all patterns to original text (not sequential modified text) to avoid order dependency
-     * - Normalizes Unicode (NFC) before scanning to prevent Unicode bypass
-     * - Enforces maximum input length (100KB) to prevent DoS
-     * - Uses a single-pass approach with StringBuilder for efficiency
-     * 
+     *
+     * <p>Fixes:</p>
+     * <ul>
+     *   <li>Applies all patterns to the same normalized text to avoid order
+     *       dependency.</li>
+     *   <li>Normalizes Unicode (NFC) before scanning to prevent Unicode
+     *       bypass.</li>
+     *   <li>Enforces a maximum input length (100 KB) to prevent DoS.</li>
+     *   <li>Uses a single-pass approach with StringBuilder for efficiency.</li>
+     * </ul>
+     *
      * @param prompt The prompt to sanitize
      * @return Sanitized prompt
      */
@@ -79,32 +90,10 @@ public class PromptSanitizer {
             return prompt;
         }
 
-        // H5: Enforce maximum input length to prevent DoS
-        if (prompt.length() > 100 * 1024) {
-            log.warn("Prompt exceeds maximum length (100KB), rejecting: {} chars", prompt.length());
-            throw new IllegalArgumentException("Prompt too long: maximum 100KB");
-        }
-
-        // H5: Normalize Unicode (NFC) to prevent Unicode bypass attacks
-        String normalized = Normalizer.normalize(prompt, Normalizer.Form.NFC);
+        String normalized = normalize(prompt);
 
         // Track all matches across all patterns before applying any replacements
-        List<MatchResult> allMatches = new ArrayList<>();
-
-        for (Pattern pattern : INJECTION_PATTERNS) {
-            Matcher matcher = pattern.matcher(normalized);
-            while (matcher.find()) {
-                String matched = matcher.group();
-                
-                // Check if it's an allowed pattern
-                boolean isAllowed = ALLOWED_PATTERNS.stream()
-                    .anyMatch(p -> p.matcher(matched).find());
-                
-                if (!isAllowed) {
-                    allMatches.add(new MatchResult(matcher.start(), matcher.end(), matched, pattern));
-                }
-            }
-        }
+        List<MatchResult> allMatches = findInjectionMatches(normalized);
 
         if (allMatches.isEmpty()) {
             return normalized;
@@ -121,7 +110,7 @@ public class PromptSanitizer {
         }
 
         String sanitized = result.toString();
-        log.info("Prompt sanitized. Original length: {}, Sanitized length: {}, Patterns matched: {}", 
+        log.info("Prompt sanitized. Original length: {}, Sanitized length: {}, Patterns matched: {}",
             prompt.length(), sanitized.length(), allMatches.size());
 
         return sanitized;
@@ -134,8 +123,8 @@ public class PromptSanitizer {
 
     /**
      * Checks if a prompt contains potential injection patterns without modifying it.
-     * Applies Unicode NFC normalization to prevent Unicode bypass attacks.
-     * 
+     * Uses the same normalization and allow-list as {@link #sanitize(String)}.
+     *
      * @param prompt The prompt to check
      * @return true if injection patterns detected
      */
@@ -143,17 +132,50 @@ public class PromptSanitizer {
         if (prompt == null || prompt.isBlank()) {
             return false;
         }
+        return !findInjectionMatches(normalize(prompt)).isEmpty();
+    }
 
-        // Apply Unicode NFC normalization to prevent Unicode bypass attacks
-        String normalized = Normalizer.normalize(prompt, Normalizer.Form.NFC);
+    /**
+     * Applies the single normalization policy used by both detection and
+     * sanitization. Keep this as the only place that normalizes prompt text.
+     */
+    private static String normalize(String prompt) {
+        // Enforce maximum input length before normalization to prevent
+        // normalization itself from becoming an unbounded operation.
+        if (prompt.length() > MAX_PROMPT_LENGTH) {
+            log.warn("Prompt exceeds maximum length (100KB): {} chars", prompt.length());
+            throw new IllegalArgumentException("Prompt too long: maximum 100KB");
+        }
+        return Normalizer.normalize(prompt, Normalizer.Form.NFC);
+    }
 
-        return INJECTION_PATTERNS.stream()
-            .anyMatch(pattern -> pattern.matcher(normalized).find());
+    /**
+     * Scans normalized text and returns matches that are not covered by the
+     * legitimate-use allow-list.
+     */
+    private static List<MatchResult> findInjectionMatches(String normalized) {
+        List<MatchResult> matches = new ArrayList<>();
+
+        for (Pattern pattern : INJECTION_PATTERNS) {
+            Matcher matcher = pattern.matcher(normalized);
+            while (matcher.find()) {
+                String matched = matcher.group();
+                if (!isAllowed(matched)) {
+                    matches.add(new MatchResult(matcher.start(), matcher.end(), matched, pattern));
+                }
+            }
+        }
+        return matches;
+    }
+
+    private static boolean isAllowed(String matched) {
+        return ALLOWED_PATTERNS.stream()
+            .anyMatch(pattern -> pattern.matcher(matched).find());
     }
 
     /**
      * Sanitizes a map of prompt variables (e.g., template variables).
-     * 
+     *
      * @param variables Map of variable names to values
      * @return Sanitized map
      */

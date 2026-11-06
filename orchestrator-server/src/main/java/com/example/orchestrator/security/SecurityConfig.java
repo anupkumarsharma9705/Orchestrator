@@ -48,12 +48,11 @@ import java.util.concurrent.ConcurrentMap;
 public class SecurityConfig {
 
     private final List<ApiKeyCredential> credentials;
-    private final boolean trustForwardedHeaders;
+    private final ClientIpResolver clientIpResolver;
 
     // Rate limiting: max 10 failed attempts per minute per IP
     private static final int MAX_FAILED_ATTEMPTS = 10;
     private static final long RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-    private static final int MAX_CLIENT_IP_LENGTH = 64;
 
     // Track failed attempts per IP
     private final ConcurrentMap<String, FailedAttemptTracker> failedAttempts = new ConcurrentHashMap<>();
@@ -61,7 +60,7 @@ public class SecurityConfig {
     public SecurityConfig(
             @Value("${orchestrator.api-key:}") String bootstrapApiKey,
             SecurityProperties properties) {
-        this.trustForwardedHeaders = properties.isTrustForwardedHeaders();
+        this.clientIpResolver = new ClientIpResolver(properties.isTrustForwardedHeaders());
         this.credentials = buildCredentials(bootstrapApiKey, properties);
     }
 
@@ -164,7 +163,7 @@ public class SecurityConfig {
     }
 
     private ApiKeyAuthenticationFilter apiKeyFilter() {
-        return new ApiKeyAuthenticationFilter(credentials, trustForwardedHeaders, failedAttempts);
+        return new ApiKeyAuthenticationFilter(credentials, clientIpResolver, failedAttempts);
     }
 
     private record ApiKeyCredential(
@@ -185,14 +184,14 @@ public class SecurityConfig {
     private static class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
         private final List<ApiKeyCredential> credentials;
-        private final boolean trustForwardedHeaders;
+        private final ClientIpResolver clientIpResolver;
         private final ConcurrentMap<String, FailedAttemptTracker> failedAttempts;
 
         public ApiKeyAuthenticationFilter(List<ApiKeyCredential> credentials,
-                                          boolean trustForwardedHeaders,
+                                          ClientIpResolver clientIpResolver,
                                           ConcurrentMap<String, FailedAttemptTracker> failedAttempts) {
             this.credentials = credentials;
-            this.trustForwardedHeaders = trustForwardedHeaders;
+            this.clientIpResolver = clientIpResolver;
             this.failedAttempts = failedAttempts;
         }
 
@@ -208,7 +207,7 @@ public class SecurityConfig {
                 return;
             }
 
-            String clientIp = getClientIp(request);
+            String clientIp = clientIpResolver.resolve(request);
 
             // Check rate limiting before authentication
             if (isRateLimited(clientIp)) {
@@ -262,42 +261,6 @@ public class SecurityConfig {
                 || path.startsWith("/actuator/health/")
                 || path.equals("/actuator/info")
                 || path.startsWith("/actuator/info/");
-        }
-
-        private String getClientIp(HttpServletRequest request) {
-            String resolved = request.getRemoteAddr();
-            if (!trustForwardedHeaders) {
-                return normaliseClientIp(resolved);
-            }
-
-            // Forwarding headers are only honoured behind a trusted proxy.
-            // Take the right-most hop: that is the value appended by the proxy
-            // closest to this server. The left-most value is client-controlled.
-            String forwardedFor = request.getHeader("X-Forwarded-For");
-            if (forwardedFor != null && !forwardedFor.isBlank()) {
-                String[] hops = forwardedFor.split(",");
-                for (int i = hops.length - 1; i >= 0; i--) {
-                    String hop = hops[i].trim();
-                    if (!hop.isEmpty()) {
-                        return normaliseClientIp(hop);
-                    }
-                }
-            }
-            String realIp = request.getHeader("X-Real-IP");
-            if (realIp != null && !realIp.isBlank()) {
-                return normaliseClientIp(realIp.trim());
-            }
-            return normaliseClientIp(resolved);
-        }
-
-        private String normaliseClientIp(String value) {
-            if (value == null || value.isBlank()) {
-                return "unknown";
-            }
-            String trimmed = value.trim();
-            return trimmed.length() > MAX_CLIENT_IP_LENGTH
-                ? trimmed.substring(0, MAX_CLIENT_IP_LENGTH)
-                : trimmed;
         }
 
         private boolean isRateLimited(String clientIp) {

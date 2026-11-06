@@ -18,7 +18,6 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class SecretScanTool implements Tool {
@@ -160,17 +159,13 @@ public class SecretScanTool implements Tool {
             if (line.length() > 10000) continue;
             
             for (SecretPattern pattern : SECRET_PATTERNS) {
-                // M8: ReDoS protection - use timeout for regex matching
-                AtomicLong startTime = new AtomicLong(System.currentTimeMillis());
+                // M8: ReDoS protection - the CharSequence enforces a hard time
+                // budget during matching, not after the regex returns.
+                long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(MAX_REGEX_TIME_MS);
                 try {
-                    var matcher = pattern.pattern().matcher(line);
-                    // Use a simple find with manual timeout check
+                    Matcher matcher = pattern.pattern()
+                        .matcher(new TimeBoundedCharSequence(line, deadlineNanos));
                     if (matcher.find()) {
-                        long elapsed = System.currentTimeMillis() - startTime.get();
-                        if (elapsed > MAX_REGEX_TIME_MS) {
-                            log.warn("Regex timeout for pattern {} on line {} of {}", pattern.name(), i + 1, relativePath);
-                            continue;
-                        }
                         // Mask the actual secret in the output
                         String maskedMatch = matcher.group().replaceAll("[A-Za-z0-9/+=]{8,}", "***REDACTED***");
                         findings.add(new SecretFinding(
@@ -180,6 +175,8 @@ public class SecretScanTool implements Tool {
                             maskedMatch
                         ));
                     }
+                } catch (TimeBoundedCharSequence.RegexTimeoutException e) {
+                    log.warn("Regex timeout for pattern {} on line {} of {}", pattern.name(), i + 1, relativePath);
                 } catch (Exception e) {
                     // Skip this pattern if it causes issues
                     continue;

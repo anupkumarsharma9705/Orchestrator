@@ -16,6 +16,9 @@
         <spring-boot.version>4.1.1</spring-boot.version>
         <sqlite-jdbc.version>3.46.0.0</sqlite-jdbc.version>
         <resilience4j.version>2.2.0</resilience4j.version>
+        <cyclonedx.version>2.9.3</cyclonedx.version>
+        <dependency-check.version>13.0.0</dependency-check.version>
+        <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -164,6 +167,44 @@
                     </execution>
                 </executions>
             </plugin>
+
+            <!--
+              Supply-chain tooling is configured here and invoked explicitly by
+              CI (makeAggregateBom / dependency-check:aggregate) so a normal
+              local `mvn verify` stays fast and does not require NVD access.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx.version}</version>
+                <configuration>
+                    <projectType>application</projectType>
+                    <schemaVersion>1.5</schemaVersion>
+                    <outputFormat>json</outputFormat>
+                    <outputName>sbom</outputName>
+                    <includeTestScope>false</includeTestScope>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>${dependency-check.version}</version>
+                <configuration>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <!--
+                      The GitHub Actions dependency-scan job supplies an NVD API
+                      key when the NVD_API_KEY secret is configured. Without it
+                      the plugin still runs but downloads the NVD feed slowly.
+                    -->
+                    <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
+                    <formats>
+                        <format>HTML</format>
+                        <format>JSON</format>
+                    </formats>
+                    <outputDirectory>${project.build.directory}</outputDirectory>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 
@@ -178,6 +219,36 @@
             <properties>
                 <spring.profiles.active>test</spring.profiles.active>
             </properties>
+        </profile>
+
+        <!--
+          Activate only in a trusted release environment after importing the
+          signing key. MAVEN_GPG_PASSPHRASE is read by maven-gpg-plugin; never
+          put a passphrase in the POM or on the command line.
+        -->
+        <profile>
+            <id>release-signing</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>${maven-gpg-plugin.version}</version>
+                        <configuration>
+                            <bestPractices>true</bestPractices>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 </project>

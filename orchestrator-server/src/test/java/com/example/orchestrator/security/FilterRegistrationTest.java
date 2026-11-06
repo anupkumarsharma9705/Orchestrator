@@ -28,7 +28,8 @@ class FilterRegistrationTest {
 
     @Test
     void mtlsFilterUsesValidServletUrlPatterns() {
-        var registration = new MtlsConfig().clientCertificateFilter();
+        var registration = new MtlsConfig(true, "X-Client-Cert-DN", false)
+            .clientCertificateFilter();
 
         assertThat(registration.getUrlPatterns())
             .containsExactly("/api/*");

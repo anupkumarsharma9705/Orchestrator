@@ -3,6 +3,7 @@
 - **Target:** `D:\ANUP\WASTE\orchestrator\orchestrator`
 - **Baseline commit:** `1dbe52b Harden orchestrator for early-access release` (plus the remediation changes described below)
 - **Audit dates:** 2026-11-05 to 2026-11-06
+- **Remediation pass:** 2026-11-07 (SEC-07 to SEC-13)
 - **Official CSO run:** `1793846202085-fc2e19d4905f0934` — finished as **partial** (static-only)
 - **Supplementary scanners:** Gitleaks, Semgrep, OSV-Scanner (Docker) — **outside the CSO contract**
 
@@ -46,7 +47,7 @@
 |---|---|---|---|
 | M-1 | **Argument injection into Trivy.** `dockerImageScan` passed `params.image` unvalidated; `trivyScan` allowed a leading `-`. A value such as `--output=...` is interpreted as a Trivy flag (no shell involved, so this is option injection rather than shell injection). | `DockerImageScanTool.java:75`, `TrivyScanTool.java:87` | **Fixed** — anchored image-reference validation; tags, registry ports and `@sha256` digests remain supported. |
 | M-2 | **Dockerfile path traversal.** `dockerfile` allowed `../`, so an arbitrary host file could be used as the build file. Build args and tags were otherwise validated. | `DockerBuildTool.java:88` | **Fixed** — resolved Dockerfile must remain under the project path. |
-| M-3 | **Rate-limit bypass via spoofed `X-Forwarded-For` / `X-Real-IP`.** The API-key filter trusts these headers unconditionally, so failed-attempt throttling can be evaded. | `SecurityConfig.java` (`getClientIp`) | **Fixed** — forwarding headers are ignored unless `orchestrator.security.trust-forwarded-headers=true`; when enabled, the right-most `X-Forwarded-For` hop is used and IP values are length-capped. Otherwise `getRemoteAddr()` is authoritative. |
+| M-3 | **Rate-limit bypass via spoofed `X-Forwarded-For` / `X-Real-IP`.** The API-key filter trusts these headers unconditionally, so failed-attempt throttling can be evaded. | `SecurityConfig.java` (`getClientIp`) | **Fixed** — forwarding headers are ignored unless `orchestrator.security.trust-forwarded-headers=true`; when enabled, the right-most `X-Forwarded-For` hop is used and IP values are length-capped. Otherwise `getRemoteAddr()` is authoritative. `SecurityConfig` and `RateLimitConfig` now share `ClientIpResolver`, so API-key throttling and endpoint rate limits key on the same identity; covered by `ClientIpResolverTest`. |
 | M-4 | **Self-update skips checksum verification silently.** | `SelfUpdateCommand.java` | **Fixed** — a published SHA-256 is mandatory. The command resolves `<jar>.sha256`, `checksums.txt` or `SHA256SUMS`, rejects malformed values, verifies the download, and exits non-zero without installing when no checksum exists or the digest mismatches. |
 | M-5 | **Absolute artifact paths disclosed** to API clients. | `TaskController.java`, `ArtifactStore.java` | **Fixed** — artifact records store workspace-relative paths, `ArtifactStore` rejects traversal and sanitizes names, project responses use `WorkspaceProperties.toRelativeDisplayPath`, and downloads set a sanitized `Content-Disposition` plus `X-Content-Type-Options: nosniff`. |
 | M-6 | **Mutable GitHub Action tags** (14 occurrences) allow a compromised tag to change code executed in CI. | Semgrep; `.github/workflows`, template `ci.yml` | **Fixed** — all actions pinned to commit SHAs. |
@@ -63,6 +64,29 @@
 | L-4 | `ProcessBuilder` hits. | **Fixed for server tools** — `DependencyCheckTool`, Git tools and all Maven/scanner/Docker tools now use the sandbox. Residual: `DoctorCommand` (local diagnostics) and `engine-core` `Coder.compileAndVerify` (library code not invoked by the server execution path) still use host `ProcessBuilder` with fixed arguments. |
 | L-5 | No tracked `LICENSE`; README says MIT while manifests/config say Apache-2.0. | Open; resolve before publishing. |
 
+### 2.4 Hardening pass SEC-07 to SEC-13
+
+These items were requested as a follow-up to the initial audit. They are recorded
+separately so the original H/M/L disposition remains stable.
+
+| ID | Issue | Remediation | Verification |
+|---|---|---|---|
+| SEC-07 | `X-Client-Cert-DN` was accepted as a client identity whenever no certificate was present, allowing identity spoofing. | `mtls.trust-proxy-header` defaults to `false`; the header is ignored and the request is rejected with `401` unless a deployment explicitly enables it. Trusted header values must contain `=`, be at most 1024 characters, and contain no CR/LF. `MTLS_TRUST_PROXY_HEADER` is exposed in `application.yml`. | `MtlsConfigTest` — default rejection, explicit opt-in, malformed header rejection, disabled pass-through. |
+| SEC-08 | Self-update had no transport allow-list or custom trust-store support, and redirects were followed without re-checking the destination. | Update traffic is HTTPS-only and restricted to `api.github.com`, `github.com`, and `*.githubusercontent.com`; redirect targets are re-validated; `owner/repo` is validated before it is interpolated into a URL. `--trust-store` / `--trust-store-type` load a PKCS12/JKS store whose password comes from `companion.update.trust-store-password` or `COMPANION_UPDATE_TRUST_STORE_PASSWORD`. The JVM default trust store is used otherwise; there is no trust-all path. | `SelfUpdateCommandTest` — scheme/host rejection, trusted hosts, repository coordinates, and trust-store password requirement. |
+| SEC-09 | Rate limiting and failed-auth throttling trusted the left-most (client-supplied) `X-Forwarded-For` hop. | A shared `ClientIpResolver` ignores forwarding headers by default. When trust is enabled it uses the right-most non-empty hop (the value appended by the nearest proxy), then `X-Real-IP`, then `getRemoteAddr()`; values are capped at 64 characters. Both security layers use the same resolver. | `ClientIpResolverTest`; `FilterRegistrationTest` updated for constructor injection. |
+| SEC-10 | Secret-scanner ReDoS protection measured elapsed time *after* `Matcher.find()` returned, so a catastrophic pattern could hang the thread indefinitely. | `TimeBoundedCharSequence` checks a wall-clock deadline every 256 character accesses inside the regex engine and throws `RegexTimeoutException`; `SecretScanTool` wraps each line/pattern match with the configured budget and logs the timed-out pattern without failing the scan. Java 21 has no `Matcher` time limit, so this is enforced at the `CharSequence` boundary. | `TimeBoundedCharSequenceTest` — normal match and a `(a+)+$` catastrophic-backtracking input aborted by the deadline. |
+| SEC-11 | Detection and sanitization could disagree because they normalized input differently and `hasInjection()` did not honor the allow-list. | `PromptSanitizer` now has one `normalize()` (NFC, 100 KB hard limit) and one `findInjectionMatches()` shared by `sanitize()` and `hasInjection()`. Both paths consult `ALLOWED_PATTERNS`. | `PromptSanitizerTest` — consistency matrix, shared Unicode normalization, oversized input rejected by both paths. |
+| SEC-12 | `EgressFilter` used blocking, unbounded `InetAddress.getAllByName()` on the request thread. | `EgressDnsResolver` runs lookups on a two-thread daemon pool with a 2 s default budget and caches positive results for 300 s and negative results for 30 s. A timeout fails closed (egress rejected); an unknown host preserves the previous fail-open-with-warning behavior. Timeout and cache TTL are configurable through `orchestrator.egress.dns-timeout-ms` / `ORCHESTRATOR_EGRESS_DNS_TIMEOUT_MS` and `orchestrator.egress.dns-cache-ttl-seconds` / `ORCHESTRATOR_EGRESS_DNS_CACHE_TTL_SECONDS`. | `EgressDnsResolverTest` — positive/negative caching and bounded slow lookup; `EgressFilterTest` — blocked literals, blocked resolution, allowed public host. |
+| SEC-13 | No SBOM, no automated dependency scan, no artifact signing, and no provenance attestation. | CycloneDX 2.9.3 generates a schema 1.5 aggregate JSON SBOM (verified locally: 222 components, including all 12 reactor modules). CI uploads the SBOM and runs OWASP dependency-check 13.0.0 with `failBuildOnCVSS=7`; `NVD_API_KEY` is optional but recommended. The release workflow imports a GPG key, runs the `release-signing` profile, generates the SBOM, writes `companion.jar.sha256` and `SHA256SUMS`, signs and verifies the jar/SBOM/checksums/installer, attests build provenance with pinned `actions/attest-build-provenance`, and uploads the `.asc` files. | Local aggregate SBOM generation and reactor compile/tests. CI and release execution are **configured but not executed in this environment**; see the manual steps below. |
+
+**SEC-13 manual prerequisites.** The release workflow requires repository secrets
+`GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`; the dependency-scan job reads optional
+`NVD_API_KEY`. GitHub Actions must be allowed to issue OIDC tokens for the
+attestation step (`id-token: write`, `attestations: write`, both declared in the
+workflow). No Maven Central publication is configured: there are no production
+coordinates, signing credentials, or repository credentials for Central, and
+publishing is not implied by the local `release-signing` profile.
+
 ## 3. Remediation applied in this pass
 
 - `MavenGoalValidator` plus call-site checks in `runMavenBuild` / `runMavenTest`.
@@ -78,7 +102,14 @@
 - Jackson 2.21.7, OpenTelemetry 1.67.0 (Zipkin exporter 1.64.0), AssertJ 3.27.7.
 - All GitHub Actions pinned to commit SHAs in both workflows and the generated-project template.
 - Docs npm `overrides` for `serialize-javascript` 7.1.4, `tinypool` 2.2.0 and `uuid` 11.1.1.
-- New/updated unit tests: `MavenGoalValidatorTest`, `ContainerReferenceValidationTest`, `ProjectManagerTest`, `SandboxServiceTest`, `SelfUpdateCommandTest`.
+- SEC-07: mTLS proxy-header trust is opt-in and validated.
+- SEC-08: HTTPS-only, host-allow-listed self-update with optional custom trust store.
+- SEC-09: shared `ClientIpResolver` with right-most-hop semantics for security and rate limiting.
+- SEC-10: hard regex deadline enforced during matching by `TimeBoundedCharSequence`.
+- SEC-11: shared prompt normalization and match detection for sanitization and detection.
+- SEC-12: timeout/cache-backed `EgressDnsResolver`; DNS timeout fails closed.
+- SEC-13: CycloneDX SBOM, OWASP dependency-check CI job, GPG-signed release assets, and provenance attestation.
+- New/updated unit tests: `MavenGoalValidatorTest`, `ContainerReferenceValidationTest`, `ProjectManagerTest`, `SandboxServiceTest`, `SelfUpdateCommandTest`, `MtlsConfigTest`, `ClientIpResolverTest`, `TimeBoundedCharSequenceTest`, `EgressDnsResolverTest`, `EgressFilterTest`, `PromptSanitizerTest`.
 
 Verification after remediation:
 
@@ -89,13 +120,16 @@ Verification after remediation:
 - `npm audit` in `docs/` — 5 low advisories (all `deepmerge`).
 - `npm run build` in `docs/` — **SUCCESS**.
 - Server dependency tree — Jackson 2.21.7, OTel 1.67.0, Zipkin 1.64.0.
+- Targeted SEC-07 to SEC-12 tests — 21 tests passed (mTLS, client IP, regex deadline, egress DNS/filter, filter registration).
+- Full reactor after SEC-07 to SEC-13 (`mvn -B -ntp clean verify`) — **BUILD SUCCESS** across all 12 modules; 262 tests, 0 failures, 1 skipped (server 85, CLI 44).
+- Aggregate CycloneDX SBOM — generated at `target/sbom.json`, schema 1.5, 222 components, including all 12 reactor modules.
 
 ## 4. Remaining production-readiness blockers
 
 1. **Sandbox image publication.** Build and publish `orchestrator/sandbox:1.0.0`; without it, sandboxed commands fail closed. The Docker engine pipe was unavailable on this host, so container-level verification is still outstanding.
 2. **Library-level host execution.** `engine-core` `Coder.compileAndVerify` still shells out to host Maven. The server execution path does not invoke `Coder`, but consumers of the engine library should sandbox it before use.
 3. **Deployment validation.** Docker Compose stack, mTLS stack, sandbox image, and a dockerized generated app remain untested. No live model-provider key has exercised online generation.
-4. **Supply chain.** No root dependency scan in CI, no SBOM, no artifact signing, no Maven Central publication, installers unpublished.
+4. **Supply chain execution and publication.** SBOM generation, dependency scanning, GPG signing, and provenance attestation are configured (SEC-13) but have not run in GitHub Actions from this environment. Maven Central publication and installer publication remain manual/external steps. Release secrets required: `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`; optional but recommended: `NVD_API_KEY`.
 5. **Data durability.** In-memory cost tracking; no backup/retention automation; no queue/worker split.
 6. **Release hygiene.** Version mismatch (`0.0.1-SNAPSHOT` vs docs `0.1.0`), stale status documents (`TESTING.md`, `ALL_ISSUES_SUMMARY.md`, `CEO_REVIEW.md`, `orchestrator-server/TODO.md`), license inconsistency.
 7. **Credential rotation.** Rotate the OpenRouter key that appeared in `orchestrator-server/.idea/workspace.xml`. The value has been scrubbed from the working tree and is not in git history, but the exposed credential must still be revoked and reissued at the provider. A repository-wide scan now finds no `sk-or-v1-...` key.

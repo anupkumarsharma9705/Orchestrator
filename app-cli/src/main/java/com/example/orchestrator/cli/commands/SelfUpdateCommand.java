@@ -18,11 +18,19 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.regex.Pattern;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +62,15 @@ public class SelfUpdateCommand implements Callable<Integer> {
     @Option(names = {"--repo"}, description = "GitHub repository (owner/repo)", defaultValue = "akash/java-companion")
     private String repository;
 
+    @Option(names = {"--trust-store"},
+        description = "PKCS12/JKS trust store used to verify GitHub TLS certificates")
+    private Path trustStore;
+
+    @Option(names = {"--trust-store-type"},
+        description = "Trust store type (PKCS12 or JKS)",
+        defaultValue = "PKCS12")
+    private String trustStoreType;
+
     @ParentCommand
     private CompanionCli parent;
 
@@ -62,10 +79,30 @@ public class SelfUpdateCommand implements Callable<Integer> {
     private static final String LATEST_RELEASE_API = "/repos/%s/releases/latest";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final Pattern REPOSITORY_PATTERN =
+        Pattern.compile("^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9_.-]+$");
+    private static final Set<String> TRUSTED_UPDATE_HOSTS =
+        Set.of("api.github.com", "github.com");
+    private static final String TRUST_STORE_PASSWORD_PROPERTY =
+        "companion.update.trust-store-password";
+    private static final String TRUST_STORE_PASSWORD_ENV =
+        "COMPANION_UPDATE_TRUST_STORE_PASSWORD";
+
     @Override
     public Integer call() throws Exception {
         CliConfig config = new ConfigManager().load();
         OutputFormatter formatter = new OutputFormatter(config.outputFormat());
+
+        if (!isValidRepository(repository)) {
+            System.err.println(Ansi.error(" Invalid repository (expected owner/repo): " + repository));
+            return 1;
+        }
+        if (trustStore != null && trustStorePassword() == null) {
+            System.err.println(Ansi.error(
+                " A trust store password is required. Set " + TRUST_STORE_PASSWORD_PROPERTY
+                    + " or " + TRUST_STORE_PASSWORD_ENV + "."));
+            return 1;
+        }
 
         System.out.println(Ansi.info(" Checking for updates..."));
         System.out.println(Ansi.dim(" Repository: " + repository));
@@ -142,6 +179,103 @@ public class SelfUpdateCommand implements Callable<Integer> {
         return installUpdate(tempJar);
     }
 
+    private HttpClient buildHttpClient(Duration connectTimeout) throws IOException {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+            .connectTimeout(connectTimeout)
+            // NORMAL never downgrades an HTTPS request to HTTP.
+            .followRedirects(HttpClient.Redirect.NORMAL);
+
+        if (trustStore != null) {
+            String password = trustStorePassword();
+            if (password == null) {
+                throw new IOException(
+                    "A trust store password is required. Set " + TRUST_STORE_PASSWORD_PROPERTY
+                        + " or " + TRUST_STORE_PASSWORD_ENV + ".");
+            }
+            builder.sslContext(buildTrustStoreContext(trustStore, trustStoreType, password));
+        }
+        // When no trust store is supplied, HttpClient uses the JVM default
+        // trust store and hostname verification. Certificate validation is
+        // never disabled.
+        return builder.build();
+    }
+
+    private String trustStorePassword() {
+        String password = System.getProperty(TRUST_STORE_PASSWORD_PROPERTY);
+        if (password == null || password.isEmpty()) {
+            password = System.getenv(TRUST_STORE_PASSWORD_ENV);
+        }
+        return password == null || password.isEmpty() ? null : password;
+    }
+
+    /**
+     * Builds an SSL context from an explicit trust store. The store replaces
+     * the JVM default, so it must contain the CA chain used by GitHub (or the
+     * CA of a compatible enterprise mirror). There is deliberately no
+     * trust-all fallback.
+     */
+    static SSLContext buildTrustStoreContext(Path store, String type, String password) throws IOException {
+        if (store == null) {
+            throw new IllegalArgumentException("Trust store path is required");
+        }
+        if (password == null) {
+            throw new IllegalArgumentException("Trust store password is required");
+        }
+        String storeType = type == null || type.isBlank() ? KeyStore.getDefaultType() : type;
+        try (InputStream input = Files.newInputStream(store)) {
+            KeyStore keyStore = KeyStore.getInstance(storeType);
+            keyStore.load(input, password.toCharArray());
+
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(
+                TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init(keyStore);
+
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(null, trustManagerFactory.getTrustManagers(), null);
+            return context;
+        } catch (GeneralSecurityException e) {
+            throw new IOException("Failed to load update trust store: " + store, e);
+        }
+    }
+
+    static boolean isValidRepository(String value) {
+        return value != null && REPOSITORY_PATTERN.matcher(value).matches();
+    }
+
+    static URI requireTrustedUpdateUri(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("Update URL is empty");
+        }
+        URI uri;
+        try {
+            uri = URI.create(raw.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid update URL: " + raw, e);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+            throw new IllegalArgumentException("Update URL must use HTTPS: " + raw);
+        }
+        if (!isTrustedUpdateHost(uri.getHost())) {
+            throw new IllegalArgumentException("Update URL host is not trusted: " + uri.getHost());
+        }
+        return uri;
+    }
+
+    static boolean isTrustedUpdateUri(URI uri) {
+        return uri != null
+            && "https".equalsIgnoreCase(uri.getScheme())
+            && isTrustedUpdateHost(uri.getHost());
+    }
+
+    static boolean isTrustedUpdateHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String lower = host.toLowerCase(Locale.ROOT);
+        return TRUSTED_UPDATE_HOSTS.contains(lower)
+            || lower.endsWith(".githubusercontent.com");
+    }
+
     private String getCurrentVersion() {
         // Try to get from Maven properties or manifest
         String version = getClass().getPackage().getImplementationVersion();
@@ -160,12 +294,11 @@ public class SelfUpdateCommand implements Callable<Integer> {
             url = String.format(GITHUB_API_BASE + LATEST_RELEASE_API, repository);
         }
 
-        HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+        URI uri = requireTrustedUpdateUri(url);
+        HttpClient client = buildHttpClient(Duration.ofSeconds(10));
 
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
+            .uri(uri)
             .header("Accept", "application/vnd.github.v3+json")
             .header("User-Agent", "Companion-CLI-Updater")
             .timeout(Duration.ofSeconds(30))
@@ -174,6 +307,10 @@ public class SelfUpdateCommand implements Callable<Integer> {
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
+        if (!isTrustedUpdateUri(response.uri())) {
+            System.err.println(Ansi.error(" Update API redirected to an untrusted host; refusing response"));
+            return null;
+        }
         if (response.statusCode() == 404) {
             System.err.println(Ansi.error(" Repository not found: " + repository));
             return null;
@@ -305,18 +442,20 @@ public class SelfUpdateCommand implements Callable<Integer> {
     }
 
     private String downloadText(String url) throws IOException, InterruptedException {
-        HttpClient client = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+        URI uri = requireTrustedUpdateUri(url);
+        HttpClient client = buildHttpClient(Duration.ofSeconds(30));
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
+            .uri(uri)
             .header("Accept", "text/plain")
             .header("User-Agent", "Companion-CLI-Updater")
             .timeout(Duration.ofMinutes(1))
             .GET()
             .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (!isTrustedUpdateUri(response.uri())) {
+            System.err.println(Ansi.error(" Checksum download redirected to an untrusted host"));
+            return null;
+        }
         if (response.statusCode() != 200) {
             System.err.println(Ansi.error(
                 " Failed to download checksum file: HTTP " + response.statusCode()));
@@ -329,13 +468,11 @@ public class SelfUpdateCommand implements Callable<Integer> {
         Path tempDir = Files.createTempDirectory("companion-update-");
         Path tempJar = tempDir.resolve("companion-new.jar");
 
-        HttpClient client = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+        URI downloadUri = requireTrustedUpdateUri(asset.browserDownloadUrl());
+        HttpClient client = buildHttpClient(Duration.ofSeconds(30));
 
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(asset.browserDownloadUrl()))
+            .uri(downloadUri)
             .header("Accept", "application/octet-stream")
             .header("User-Agent", "Companion-CLI-Updater")
             .timeout(Duration.ofMinutes(5))
@@ -348,6 +485,12 @@ public class SelfUpdateCommand implements Callable<Integer> {
             request, 
             HttpResponse.BodyHandlers.ofFile(tempJar)
         );
+
+        if (!isTrustedUpdateUri(response.uri())) {
+            System.out.println(Ansi.error(" Failed: download redirected to an untrusted host"));
+            Files.deleteIfExists(tempJar);
+            return null;
+        }
 
         if (response.statusCode() != 200) {
             System.out.println(Ansi.error(" Failed: HTTP " + response.statusCode()));

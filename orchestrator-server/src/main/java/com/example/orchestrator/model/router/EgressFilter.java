@@ -52,6 +52,8 @@ public final class EgressFilter {
 
     private EgressFilter() {}
 
+    private static final EgressDnsResolver DNS_RESOLVER = EgressDnsResolver.production();
+
     /**
      * Validates that a URL is safe for egress (not pointing to internal endpoints).
      * 
@@ -59,6 +61,13 @@ public final class EgressFilter {
      * @throws IllegalArgumentException if URL points to blocked internal endpoint
      */
     public static void validateEgress(String url) {
+        validateEgress(url, DNS_RESOLVER);
+    }
+
+    /**
+     * Package-private overload used by tests to inject a deterministic resolver.
+     */
+    static void validateEgress(String url, EgressDnsResolver resolver) {
         if (url == null || url.isBlank()) {
             throw new IllegalArgumentException("URL cannot be null or empty");
         }
@@ -87,20 +96,30 @@ public final class EgressFilter {
                     throw new IllegalArgumentException("Access to internal IP blocked: " + host);
                 }
             } else {
-                // Resolve hostname to check IPs (with timeout to prevent DNS blocking)
-                // Note: In production, you'd want to cache DNS resolutions and set a timeout
+                // Resolve hostname through the bounded, cached resolver. A
+                // timeout fails closed: the HTTP client would otherwise perform
+                // its own unbounded lookup and could connect before validation.
                 try {
-                    var addresses = java.net.InetAddress.getAllByName(host);
-                    for (var addr : addresses) {
-                        String ip = addr.getHostAddress();
-                        if (isIpInBlockedRanges(ip)) {
-                            log.error("BLOCKED EGRESS: Host {} resolves to blocked IP: {}", host, ip);
-                            throw new IllegalArgumentException("Host resolves to blocked internal IP: " + host);
+                    java.net.InetAddress[] addresses = resolver.resolve(host);
+                    if (addresses == null) {
+                        // Preserve the previous fail-open behavior for unknown
+                        // hosts; the actual connection will fail as well.
+                        log.warn("Could not resolve host for egress validation: {}", host);
+                    } else {
+                        for (java.net.InetAddress addr : addresses) {
+                            String ip = addr.getHostAddress();
+                            if (isIpInBlockedRanges(ip)) {
+                                log.error("BLOCKED EGRESS: Host {} resolves to blocked IP: {}", host, ip);
+                                throw new IllegalArgumentException("Host resolves to blocked internal IP: " + host);
+                            }
                         }
                     }
-                } catch (java.net.UnknownHostException e) {
-                    // If we can't resolve, we allow but log a warning
-                    log.warn("Could not resolve host for egress validation: {}", host);
+                } catch (EgressDnsResolver.DnsResolutionTimeoutException e) {
+                    log.error("BLOCKED EGRESS: DNS timeout for host {}: {}", host, e.getMessage());
+                    throw new IllegalArgumentException("Could not resolve host within the egress DNS timeout: " + host, e);
+                } catch (IllegalStateException e) {
+                    log.error("BLOCKED EGRESS: DNS failure for host {}: {}", host, e.getMessage());
+                    throw new IllegalArgumentException("Could not resolve host for egress validation: " + host, e);
                 }
             }
 

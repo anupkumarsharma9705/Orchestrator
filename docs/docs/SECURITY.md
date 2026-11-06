@@ -2,12 +2,13 @@
 
 ## Supported versions
 
-No release has been published yet. Security fixes land on the `main` branch;
-rebuild from source after pulling the fix.
+No release has been published yet. Security fixes land on the default branch
+(`main`, or `master` in a checkout that still uses the older name); rebuild from
+source after pulling the fix.
 
 | Version | Supported |
 |---------|-----------|
-| `main` (source) | Yes |
+| `main` / `master` (source) | Yes |
 | Published releases | None yet |
 
 ## Reporting a vulnerability
@@ -45,17 +46,32 @@ available.
 - **Route coverage**: a catch-all filter chain authenticates every route except
   the explicit public set (`/api/version`, health, and info).
 - **Client IP**: `X-Forwarded-For` / `X-Real-IP` are honoured only when
-  `orchestrator.security.trust-forwarded-headers` is enabled. Leave it off
-  unless the server sits behind a proxy you control.
+  `orchestrator.security.trust-forwarded-headers` is enabled. When enabled, the
+  **right-most** `X-Forwarded-For` hop is used, because that is the value
+  appended by the proxy nearest to the server; the left-most hop is
+  client-controlled. Leave the flag off unless the server sits behind a proxy
+  you control that overwrites these headers. API-key throttling and endpoint
+  rate limits share the same resolver.
 - **Transport**: HTTPS with mTLS; the server requires a client certificate.
+  A reverse proxy may forward the client DN in `X-Client-Cert-DN`, but that
+  header is ignored by default. Set `mtls.trust-proxy-header=true` only when
+  the proxy terminates TLS and overwrites the header for every request.
+  Trusted header values must look like a DN (contain `=`), be at most 1024
+  characters, and contain no control characters.
 - **Rate limiting**: Resilience4j per-endpoint limits plus failed-auth
   throttling per client IP.
-- **Audit log**: JSON lines in `orchestrator-audit.log`. The audit and mTLS
-  filters use servlet-valid prefix patterns (`/api/*`, `/actuator/*`), so API
-  and actuator requests are actually recorded and `X-Client-Cert-DN` reaches
-  downstream handlers.
+- **Audit log**: JSON lines in `orchestrator-audit.log`. The audit filter uses
+  servlet-valid prefix patterns (`/api/*`, `/actuator/*`) and the mTLS filter
+  uses `/api/*`, so API and actuator requests are actually recorded and
+  `X-Client-Cert-DN` reaches downstream handlers.
 - **Input validation**: Jakarta Bean Validation and request size limits.
-- **Prompt sanitization**: pattern-based removal of prompt-injection attempts.
+- **Prompt sanitization**: injection detection and removal share one NFC
+  normalization and one match set, so `hasInjection()` and `sanitize()` cannot
+  disagree. Inputs over 100 KB are rejected.
+- **Egress filtering**: model-provider URLs are checked against loopback,
+  link-local, private, and internal hostnames. Hostname lookups use a
+  timeout- and cache-backed resolver (2 s default, 300 s positive cache); a DNS
+  timeout fails closed rather than allowing the connection.
 - **Workspace confinement**: a project's `rootPath` must be an absolute,
   canonical directory below `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS`. API
   responses report workspace-relative paths instead of host paths.
@@ -98,10 +114,27 @@ available.
 
 - Sandbox image registry allow/deny rules and explicit-tag requirements.
 - Gitleaks secret scanning in root CI.
+- CI generates a CycloneDX 1.5 aggregate SBOM and uploads it as a build
+  artifact.
+- CI runs OWASP dependency-check and fails at CVSS 7 or higher. `NVD_API_KEY`
+  is optional but avoids the slow anonymous NVD feed.
 - Release assets include a SHA-256 checksum that `install.sh` verifies.
+- Release builds import a GPG key, sign the jar, SBOM, checksum files, and
+  installer, verify every signature, and attest build provenance. Required
+  repository secrets: `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`; optional but
+  recommended: `NVD_API_KEY`.
+- Maven Central publication is **not configured**. The `release-signing` Maven
+  profile signs reactor artifacts locally, but publishing requires production
+  coordinates, signing credentials, and repository access.
 - `companion self-update` requires a published checksum (`<jar>.sha256`,
   `checksums.txt`, or `SHA256SUMS`) and refuses to install a release without
-  one.
+  one. Update requests are HTTPS-only and restricted to GitHub hosts; redirects
+  to other hosts are rejected. A custom CA can be supplied with
+  `--trust-store` / `--trust-store-type`, with the password read from
+  `companion.update.trust-store-password` or
+  `COMPANION_UPDATE_TRUST_STORE_PASSWORD`. There is no trust-all mode; the JVM
+  default trust store and hostname verification apply when no custom store is
+  supplied.
 
 ## User guidance
 
@@ -112,6 +145,9 @@ available.
 - Never store provider keys in IDE workspace files (`.idea/`, `.vscode/`) or
   other ignored-but-local files. Ignore rules prevent commits, not disclosure
   through backups, screen sharing, or endpoint compromise.
+- Run `mvn -B -ntp verify` and the optional `-Psecurity` scan in the generated
+  project.
+- Back up PostgreSQL and the artifact directory before upgrading.
 
 ### Rotating the OpenRouter key
 
@@ -128,9 +164,6 @@ treat it as compromised even when it was never committed:
    `.idea/` is already ignored by `.gitignore` and
    `orchestrator-server/.gitignore`; rotation is still required because
    ignoring a file does not revoke a leaked credential.
-- Run `mvn -B -ntp verify` and the optional `-Psecurity` scan in the generated
-  project.
-- Back up PostgreSQL and the artifact directory before upgrading.
 
 ## Disclosure timeline
 
@@ -155,4 +188,4 @@ must perform your own assessment.
 
 ---
 
-*Last updated: 2026-11-06*
+*Last updated: 2026-11-07*

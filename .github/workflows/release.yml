@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -27,8 +29,26 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Verify reactor
-        run: mvn -B -ntp clean verify
+      - name: Import release signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "::error::GPG_PRIVATE_KEY is required for signed releases"
+            exit 1
+          fi
+          mkdir -p "$HOME/.gnupg"
+          chmod 700 "$HOME/.gnupg"
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Verify and sign reactor
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: mvn -B -ntp -Prelease-signing clean verify
+
+      - name: Generate CycloneDX SBOM
+        run: mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.3:makeAggregateBom
 
       - name: Smoke test CLI
         run: java -jar app-cli/target/app-cli-*-exec.jar --help
@@ -38,6 +58,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp app-cli/target/app-cli-*-exec.jar dist/companion.jar
+          cp target/sbom.json dist/sbom.json
 
           cat > dist/install.sh <<'EOF'
           #!/usr/bin/env bash
@@ -99,8 +120,41 @@ jobs:
           chmod +x dist/install.sh
           bash -n dist/install.sh
 
-      - name: Verify JAR checksum
-        run: sha256sum dist/companion.jar | tee dist/companion.jar.sha256
+      - name: Create checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum companion.jar > companion.jar.sha256
+          sha256sum companion.jar sbom.json install.sh > SHA256SUMS
+          sha256sum --check companion.jar.sha256
+          sha256sum --check SHA256SUMS
+
+      - name: Sign release assets
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          passfile=$(mktemp)
+          trap 'rm -f "$passfile"' EXIT
+          chmod 600 "$passfile"
+          printf '%s' "${GPG_PASSPHRASE:-}" > "$passfile"
+
+          for file in dist/companion.jar dist/sbom.json dist/SHA256SUMS dist/install.sh; do
+            gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-file "$passfile" --armor --detach-sign "$file"
+          done
+
+          for signature in dist/*.asc; do
+            gpg --batch --verify "$signature" "${signature%.asc}"
+          done
+
+      - name: Attest release provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/companion.jar
+            dist/sbom.json
+            dist/SHA256SUMS
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3
@@ -108,6 +162,12 @@ jobs:
           files: |
             dist/companion.jar
             dist/companion.jar.sha256
+            dist/companion.jar.asc
+            dist/sbom.json
+            dist/sbom.json.asc
+            dist/SHA256SUMS
+            dist/SHA256SUMS.asc
             dist/install.sh
+            dist/install.sh.asc
           generate_release_notes: true
           fail_on_unmatched_files: true

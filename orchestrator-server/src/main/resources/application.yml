@@ -96,6 +96,9 @@ server:
 mtls:
   enabled: true
   client-cert-header: X-Client-Cert-DN
+  # Only trust client-cert-header when a reverse proxy terminates TLS and
+  # overwrites the header for every request. Leave false for direct TLS.
+  trust-proxy-header: ${MTLS_TRUST_PROXY_HEADER:false}
   trusted-ca: ${MTLS_TRUSTED_CA:}
 
 management:

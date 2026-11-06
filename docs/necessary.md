@@ -2,7 +2,7 @@
 
 - **Status:** Requirements and gap-analysis baseline
 - **Baseline commit:** `c4b921a`
-- **Last updated:** 2026-11-06
+- **Last updated:** 2026-11-07
 - **Purpose:** Define what the product must do to be trusted by Java developers, usable by
   beginners and experts, defensible against attackers at scale, and viable as a
   high-volume service.
@@ -347,7 +347,7 @@ scope-limited; **Missing** — not implemented.
 | CDN/WAF/adaptive rate limiting/PoW | Partial | Per-IP rate limiting exists; no CDN, WAF, or adaptive challenge |
 | Free-tier farming defenses | Missing | Not implemented |
 | Model-extraction and jailbreak monitoring | Missing | Not implemented |
-| Insider and supply-chain controls (signed builds, reproducible CI) | Partial | GitHub Actions are pinned to SHAs; artifacts are not signed and no SBOM is published |
+| Insider and supply-chain controls (signed builds, reproducible CI) | Partial | GitHub Actions are pinned to SHAs; CI generates a CycloneDX SBOM and runs OWASP dependency-check; release artifacts are GPG-signed and provenance-attested when the release secrets exist. Maven Central publication is not configured. |
 | Assume-breach controls (segmentation, tamper-evident audit, game days) | Missing | Audit logging exists but tamper-evidence and network segmentation do not |
 
 ### A.4 Usability requirements
@@ -409,3 +409,17 @@ the following are true:
 | SEC-04 | TLS-only health check | Compose health check calls `/actuator/health` over mTLS and requires `"status":"UP"`. | None. |
 | SEC-05 | Flyway warning noise | PostgreSQL sessions use `client_min_messages=warning`; tests override the init SQL for H2. | None. |
 | SEC-06 | OpenRouter key in `.idea/workspace.xml` | Local IDE value is scrubbed; `.idea/` is ignored in both `.gitignore` files; rotation steps are documented in `docs/docs/SECURITY.md`. | Revoke and replace the key in the OpenRouter dashboard and CI secrets. |
+
+---
+
+## Appendix D — Security Hardening (SEC-07 to SEC-13)
+
+| ID | Issue | Remediation | Remaining external action |
+|---|---|---|---|
+| SEC-07 | mTLS identity spoofing through `X-Client-Cert-DN` | The header is ignored unless `mtls.trust-proxy-header=true`; trusted values are length-capped and rejected if they contain control characters or lack `=`; regression tests cover opt-in and default denial. | Enable the flag only behind a proxy that terminates TLS and overwrites the header on every request. |
+| SEC-08 | Self-update transport trust | Update traffic is HTTPS-only and restricted to GitHub hosts; redirects are re-validated; `owner/repo` is validated; an optional PKCS12/JKS trust store is supported via `--trust-store`, with no trust-all fallback. | Distributors using a private CA must provide a trust store and its password through the documented property/environment variable. |
+| SEC-09 | Rate-limit bypass via spoofed forwarding headers | A shared `ClientIpResolver` ignores forwarding headers by default and uses the right-most `X-Forwarded-For` hop only when proxy trust is enabled; API-key throttling and endpoint limits use the same resolver. | None. |
+| SEC-10 | Secret-scanner regex denial of service | `TimeBoundedCharSequence` enforces a wall-clock deadline inside the regex engine; `SecretScanTool` skips and logs a pattern that exceeds its budget. | None. |
+| SEC-11 | Detection/sanitization normalization drift | `PromptSanitizer` uses one NFC normalization and one shared match set for `sanitize()` and `hasInjection()`; both honor the same allow-list. | None. |
+| SEC-12 | Unbounded egress DNS resolution | `EgressDnsResolver` bounds lookups (2 s default), caches positive/negative results, and fails closed on timeout; configuration is available through system properties or environment variables. | Tune the timeout and cache TTL for the deployment's DNS environment. |
+| SEC-13 | Missing supply-chain controls | CI generates a CycloneDX aggregate SBOM and runs OWASP dependency-check; the release workflow signs the jar, SBOM, checksums, and installer with GPG, verifies signatures, and attests build provenance. | Configure `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`; optionally `NVD_API_KEY`. Maven Central publication remains out of scope until production coordinates and repository credentials exist. |
