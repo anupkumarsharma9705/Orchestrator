@@ -143,7 +143,7 @@ Routes requests to LLM providers with:
 - **Circuit Breaker** — Per-provider failure tracking
 - **Cost Tracking** — Per-task, per-day budgets with alerts
 - **Failover** — Automatic failover on failures
-- **Provider Abstraction** - NVIDIA (default), OpenRouter, Ollama (Kaggle is a disabled stub)
+- **Provider Abstraction** - OpenRouter (enabled by default), NVIDIA, Ollama (Kaggle is a disabled stub)
 
 ### Clarifier (`engine-core`)
 

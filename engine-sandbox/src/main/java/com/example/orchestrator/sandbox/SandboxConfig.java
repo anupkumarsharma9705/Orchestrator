@@ -130,6 +130,25 @@ public class SandboxConfig {
     private String workspaceMountPath = "/workspace";
 
     /**
+     * Named Docker volume that holds the workspace tree when the server itself
+     * runs in a container (Docker-outside-of-Docker).
+     *
+     * <p>A bind mount taken from the server container path cannot be resolved
+     * by a sibling sandbox container: the daemon sees host paths, not the
+     * server's mount namespace. When this is set, workspaces below
+     * {@link #workspaceVolumeRoot} are mounted from the named volume instead.
+     * Leave empty for a server running directly on the Docker host.</p>
+     */
+    private String workspaceVolume = "";
+
+    /**
+     * Container path where the shared workspace volume is mounted. Must be an
+     * absolute path and must match the server's workspace allow-list.
+     */
+    @NotBlank
+    private String workspaceVolumeRoot = "/workspaces";
+
+    /**
      * Host directories that may be mounted into the sandbox.
      *
      * <p>Every project workspace must live below one of these roots. Leaving
@@ -232,6 +251,12 @@ public class SandboxConfig {
 
     public String getWorkspaceMountPath() { return workspaceMountPath; }
     public void setWorkspaceMountPath(String workspaceMountPath) { this.workspaceMountPath = workspaceMountPath; }
+
+    public String getWorkspaceVolume() { return workspaceVolume; }
+    public void setWorkspaceVolume(String workspaceVolume) { this.workspaceVolume = workspaceVolume; }
+
+    public String getWorkspaceVolumeRoot() { return workspaceVolumeRoot; }
+    public void setWorkspaceVolumeRoot(String workspaceVolumeRoot) { this.workspaceVolumeRoot = workspaceVolumeRoot; }
 
     public List<String> getWorkspaceRoots() { return workspaceRoots; }
     public void setWorkspaceRoots(List<String> workspaceRoots) { this.workspaceRoots = workspaceRoots; }
@@ -389,6 +414,15 @@ public class SandboxConfig {
 
         if (workspaceRoots != null && workspaceRoots.stream().anyMatch(root -> root == null || root.isBlank())) {
             throw new IllegalStateException("sandbox workspace roots must not contain blank entries");
+        }
+
+        if (workspaceVolume != null && !workspaceVolume.isBlank()) {
+            if (!workspaceVolume.matches("[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}")) {
+                throw new IllegalStateException("sandbox workspace volume name is invalid: " + workspaceVolume);
+            }
+            if (workspaceVolumeRoot == null || !workspaceVolumeRoot.startsWith("/")) {
+                throw new IllegalStateException("sandbox workspace volume root must be an absolute container path");
+            }
         }
 
         // Validate security options

@@ -49,7 +49,7 @@ Generate Spring Boot REST APIs from natural language descriptions, with secure d
   <div className="featureCard">
     <span className="featureIcon">🤖</span>
     <h3 className="featureTitle">Multi-LLM Support</h3>
-    <p className="featureDescription">NVIDIA (default), OpenRouter, and local Ollama providers, with circuit breakers, cost tracking, and budgets.</p>
+    <p className="featureDescription">OpenRouter (enabled by default), NVIDIA, and local Ollama providers, with circuit breakers, cost tracking, and budgets.</p>
   </div>
 
   <div className="featureCard">

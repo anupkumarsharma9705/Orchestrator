@@ -127,19 +127,22 @@ public class ModelRouter {
             request.metadata()
         );
         
-        return executeWithFailover(routedRequest, profileConfig);
+        return executeWithFailover(routedRequest, profile, profileConfig);
     }
 
-    private Mono<ChatResponse> executeWithFailover(ChatRequest request, ModelProfileConfig profileConfig) {
-        List<ModelProfile> fallbackChain = profileConfig.fallbackProfiles() != null ? 
-            profileConfig.fallbackProfiles() : List.of(config.defaultProfile());
+    private Mono<ChatResponse> executeWithFailover(ChatRequest request, ModelProfile profile,
+                                                   ModelProfileConfig profileConfig) {
+        List<ModelProfile> fallbackChain = profileConfig != null && profileConfig.fallbackProfiles() != null
+            ? profileConfig.fallbackProfiles()
+            : List.of();
 
         // Try primary provider first
-        String primaryProvider = profileConfig.provider();
-        ModelProvider provider = providers.get(primaryProvider);
-        
+        String primaryProvider = profileConfig != null ? profileConfig.provider() : null;
+        ModelProvider provider = primaryProvider != null ? providers.get(primaryProvider) : null;
+
         if (provider != null && canUseProvider(primaryProvider)) {
-            return executeWithProvider(provider, request, "primary");
+            return executeWithProvider(provider,
+                withProviderModel(request, profile, profileConfig, primaryProvider), "primary");
         }
 
         // Try fallbacks
@@ -149,20 +152,83 @@ public class ModelRouter {
                 ModelProvider fallbackProvider = providers.get(fallbackConfig.provider());
                 if (fallbackProvider != null && canUseProvider(fallbackConfig.provider())) {
                     log.warn("Falling back to provider: {} for profile: {}", fallbackConfig.provider(), fallbackProfile);
-                    return executeWithProvider(fallbackProvider, request, "fallback-" + fallbackProfile);
+                    return executeWithProvider(fallbackProvider,
+                        withProviderModel(request, profile, profileConfig, fallbackConfig.provider()),
+                        "fallback-" + fallbackProfile);
                 }
             }
         }
 
         // Try any available provider as last resort
         for (ModelProvider fallbackProvider : providers.values()) {
-            if (canUseProvider(fallbackProvider.getProviderName())) {
-                log.warn("Using last-resort provider: {}", fallbackProvider.getProviderName());
-                return executeWithProvider(fallbackProvider, request, "last-resort");
+            String fallbackName = fallbackProvider.getProviderName();
+            if (canUseProvider(fallbackName)) {
+                log.warn("Using last-resort provider: {}", fallbackName);
+                return executeWithProvider(fallbackProvider,
+                    withProviderModel(request, profile, profileConfig, fallbackName), "last-resort");
             }
         }
 
         return Mono.error(new IllegalStateException("No available providers"));
+    }
+
+    /**
+     * Rewrites the model for the provider that will actually execute the
+     * request.
+     *
+     * <p>Profiles name the model for their primary provider (NVIDIA). A
+     * fallback provider such as OpenRouter uses different model identifiers,
+     * and sending the primary provider's slug produces a 4xx error. The
+     * {@code providers.<name>.models} map holds the per-profile identifier for
+     * each provider. An explicitly requested model is left untouched.</p>
+     */
+    private ChatRequest withProviderModel(ChatRequest request, ModelProfile profile,
+                                          ModelProfileConfig profileConfig, String providerName) {
+        if (request == null || profile == null || providerName == null || config.providers() == null) {
+            return request;
+        }
+
+        ModelRouterConfig.ProviderConfig providerConfig = config.providers().get(providerName);
+        if (providerConfig == null || providerConfig.models() == null) {
+            return request;
+        }
+
+        String profileModel = profileConfig != null ? profileConfig.model() : null;
+        if (request.model() != null && !request.model().equals(profileModel)) {
+            return request;
+        }
+
+        String mappedModel = providerConfig.models().get(profileConfigKey(profile));
+        if (mappedModel == null || mappedModel.isBlank() || mappedModel.equals(request.model())) {
+            return request;
+        }
+
+        return new ChatRequest(
+            request.messages(),
+            mappedModel,
+            request.temperature(),
+            request.maxTokens(),
+            request.topP(),
+            request.topK(),
+            request.stopSequences(),
+            request.stream(),
+            request.systemPrompt(),
+            request.tools(),
+            request.toolChoice(),
+            request.responseFormat(),
+            request.metadata()
+        );
+    }
+
+    private String profileConfigKey(ModelProfile profile) {
+        return switch (profile) {
+            case PLANNER -> "planner";
+            case CODER -> "coder";
+            case REVIEWER -> "reviewer";
+            case SECURITY_REASONING -> "security";
+            case DOCUMENTATION -> "docs";
+            case GENERAL -> "general";
+        };
     }
 
     private boolean canUseProvider(String providerName) {

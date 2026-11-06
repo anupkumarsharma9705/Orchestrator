@@ -53,11 +53,11 @@ public record ModelRouterConfig(
                     "OPENROUTER_API_KEY",
                     Map.of(
                         "planner", "nvidia/nemotron-3-ultra-550b-a55b:free",
-                        "coder", "poolside/laguna-s-2.1:free",
+                        "coder", "cohere/north-mini-code:free",
                         "reviewer", "nvidia/nemotron-3-ultra-550b-a55b:free",
                         "security", "nvidia/nemotron-3-ultra-550b-a55b:free",
                         "docs", "cohere/north-mini-code:free",
-                        "general", "z-ai/glm-5.2:free"
+                        "general", "nvidia/nemotron-3-ultra-550b-a55b:free"
                     ),
                     60, 60, true
                 ),

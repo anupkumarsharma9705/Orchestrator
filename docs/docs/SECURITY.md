@@ -50,7 +50,10 @@ available.
 - **Transport**: HTTPS with mTLS; the server requires a client certificate.
 - **Rate limiting**: Resilience4j per-endpoint limits plus failed-auth
   throttling per client IP.
-- **Audit log**: JSON lines in `orchestrator-audit.log`.
+- **Audit log**: JSON lines in `orchestrator-audit.log`. The audit and mTLS
+  filters use servlet-valid prefix patterns (`/api/*`, `/actuator/*`), so API
+  and actuator requests are actually recorded and `X-Client-Cert-DN` reaches
+  downstream handlers.
 - **Input validation**: Jakarta Bean Validation and request size limits.
 - **Prompt sanitization**: pattern-based removal of prompt-injection attempts.
 - **Workspace confinement**: a project's `rootPath` must be an absolute,
@@ -71,14 +74,21 @@ available.
 - Build, test, and scanner tools run inside a Docker sandbox; they do not
   execute target commands on the server host.
 - The sandbox drops all capabilities, uses a read-only rootfs, runs as uid/gid
-  `1000:1000`, and disables networking by default.
+  `1001:1001`, and disables networking by default.
 - Resource limits: 2 GB memory, 2 CPUs, 100 processes, bounded timeouts.
 - Workspaces must live below `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS`, the same
   allow-list as project registration.
 - The sandbox **fails closed**. If the Docker daemon is unreachable, sandbox
-  operations return an error; they do not fall back to host execution. The
-  Compose stack intentionally does not mount the Docker socket, so builds and
-  scans are unavailable there until a sandbox-capable daemon is provided.
+  operations return an error; they do not fall back to host execution.
+- The development Compose stack builds the sandbox image and mounts the host
+  Docker socket plus a shared workspace volume so builds and scans work. This
+  is **not** a production boundary: the Docker socket is root-equivalent host
+  access. Production deployments must use a dedicated or remote Docker daemon
+  over TLS and must not mount the host socket into the server container.
+- Sandbox readiness is part of `/actuator/health`: a missing daemon, sandbox
+  image, or shared workspace volume reports `DOWN`, and the Compose health
+  check verifies the application health endpoint over mTLS instead of only
+  completing a TLS handshake.
 - `engine-verify` scanners include compile, tests, coverage, SpotBugs,
   Checkstyle, Semgrep, OWASP Dependency-Check, Trivy, and secrets. Container
   image scans export the image to a tar and scan it inside the sandbox rather
@@ -99,6 +109,25 @@ available.
 - Keep provider keys and database passwords in environment variables or a
   secret manager, never in `config.yaml` or source control.
 - Review generated code before deploying it.
+- Never store provider keys in IDE workspace files (`.idea/`, `.vscode/`) or
+  other ignored-but-local files. Ignore rules prevent commits, not disclosure
+  through backups, screen sharing, or endpoint compromise.
+
+### Rotating the OpenRouter key
+
+If a key was ever pasted into a local IDE file, a log, or a shell history,
+treat it as compromised even when it was never committed:
+
+1. Revoke the key in the OpenRouter dashboard and create a replacement.
+2. Update `.env` locally and the secret store used by CI/deployment.
+3. Restart the server so the new value is loaded
+   (`docker compose up -d --force-recreate orchestrator-server`).
+4. Confirm `/api/health/providers` reports the `openrouter` provider as
+   available.
+5. Remove the old value from local IDE files, shell history, and backups.
+   `.idea/` is already ignored by `.gitignore` and
+   `orchestrator-server/.gitignore`; rotation is still required because
+   ignoring a file does not revoke a leaked credential.
 - Run `mvn -B -ntp verify` and the optional `-Psecurity` scan in the generated
   project.
 - Back up PostgreSQL and the artifact directory before upgrading.

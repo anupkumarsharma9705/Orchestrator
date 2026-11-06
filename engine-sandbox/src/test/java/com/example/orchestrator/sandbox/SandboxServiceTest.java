@@ -1,5 +1,6 @@
 package com.example.orchestrator.sandbox;
 
+import com.github.dockerjava.api.model.Bind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +14,8 @@ import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 
 /**
  * Tests for the SandboxService security features.
@@ -247,6 +250,60 @@ class SandboxServiceTest {
         sandboxService = new SandboxService(config);
 
         assertThat(invokeValidateWorkspacePath(link)).isNull();
+    }
+
+    @Test
+    void createWorkspaceBind_usesSharedVolumeWhenConfigured(@TempDir Path tempDir) throws IOException {
+        Path workspaceRoot = tempDir.resolve("workspaces");
+        Path project = workspaceRoot.resolve("library");
+        Files.createDirectories(project);
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(workspaceRoot.toString()));
+        config.setWorkspaceVolume("orchestrator-workspace");
+        config.setWorkspaceVolumeRoot(workspaceRoot.toString());
+        sandboxService = spy(new SandboxService(config));
+        doReturn("/var/lib/docker/volumes/orchestrator-workspace/_data")
+            .when(sandboxService).resolveWorkspaceVolumeMountpoint("orchestrator-workspace");
+
+        Bind bind = sandboxService.createWorkspaceBind(project.toRealPath());
+
+        assertThat(bind).isNotNull();
+        assertThat(bind.getPath())
+            .isEqualTo("/var/lib/docker/volumes/orchestrator-workspace/_data/library");
+        assertThat(bind.getVolume().getPath()).isEqualTo("/workspace");
+    }
+
+    @Test
+    void createWorkspaceBind_failsClosedWhenVolumeMountpointIsMissing(@TempDir Path tempDir) throws IOException {
+        Path workspaceRoot = tempDir.resolve("workspaces");
+        Path project = workspaceRoot.resolve("library");
+        Files.createDirectories(project);
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(workspaceRoot.toString()));
+        config.setWorkspaceVolume("orchestrator-workspace");
+        config.setWorkspaceVolumeRoot(workspaceRoot.toString());
+        sandboxService = spy(new SandboxService(config));
+        doReturn(null).when(sandboxService).resolveWorkspaceVolumeMountpoint("orchestrator-workspace");
+
+        assertThat(sandboxService.createWorkspaceBind(project.toRealPath())).isNull();
+    }
+
+    @Test
+    void createWorkspaceBind_rejectsPathOutsideSharedVolume(@TempDir Path tempDir) throws IOException {
+        Path workspaceRoot = tempDir.resolve("workspaces");
+        Path project = tempDir.resolve("outside");
+        Files.createDirectories(workspaceRoot);
+        Files.createDirectories(project);
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(tempDir.toString()));
+        config.setWorkspaceVolume("orchestrator-workspace");
+        config.setWorkspaceVolumeRoot(workspaceRoot.toString());
+        sandboxService = new SandboxService(config);
+
+        assertThat(sandboxService.createWorkspaceBind(project.toRealPath())).isNull();
     }
 
     @Test

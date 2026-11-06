@@ -51,15 +51,11 @@ java -jar app-cli/target/app-cli-0.0.1-SNAPSHOT-exec.jar generate \
 
 `dev-up` creates a `.env` file with generated secrets if one does not exist. Never commit it. To configure values yourself, copy `.env.example` to `.env` and fill in at least `ORCHESTRATOR_API_KEY`, `POSTGRES_PASSWORD`, and `CERT_PASSWORD`.
 
-The server starts without model-provider credentials, but server-backed generation fails with `No available providers`. NVIDIA is the default provider: set `NVIDIA_API_KEY` in `.env` and restart the stack with `docker compose up -d`. OpenRouter and Ollama are implemented but disabled by default. To use OpenRouter, set `OPENROUTER_API_KEY` and enable the provider, for example with `ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED=true` in `.env`. Kaggle is a disabled stub. The `--offline` generator above needs no key.
+The server starts without model-provider credentials, but server-backed generation fails with `No available providers`. OpenRouter is enabled by default: set `OPENROUTER_API_KEY` in `.env` and restart the stack with `docker compose up -d`. NVIDIA is optional (`NVIDIA_API_KEY`); Ollama is implemented but disabled by default. Kaggle is a disabled stub. The `--offline` generator above needs no key.
 
-The compose stack does not mount the Docker socket, so the server cannot reach a Docker daemon. The sandbox **fails closed**: `runMavenBuild`, `runMavenTest`, and the scanner tools return `Sandbox unavailable: Docker daemon not reachable` instead of running on the server host. To exercise those tools, run the server on a host that can reach a Docker daemon and build the sandbox image first:
+The compose stack builds `orchestrator/sandbox:1.0.0`, mounts the host Docker socket, and shares a named workspace volume between the server and sandbox containers. Build, test, and scanner tools therefore run in the sandbox. Mounting the Docker socket gives the server **root-equivalent control of the host**, so this mode is for local development only. For production, point the server at a dedicated or remote Docker daemon over TLS (`orchestrator.sandbox.docker-host` plus the Docker certificate paths) and do not mount the host socket. The sandbox still **fails closed**: when no daemon is reachable, tools return `Sandbox unavailable` instead of running on the server host.
 
-```bash
-docker build -t orchestrator/sandbox:1.0.0 engine-sandbox/src/main/resources/docker
-```
-
-Project registration is also confined: a `rootPath` must be an absolute, existing directory below `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS` (default `~/.orchestrator/workspaces`, empty means registration is disabled). Keep `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS` aligned with the same directories.
+Project registration is confined: a `rootPath` must be an absolute, existing directory below `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS` (the compose stack uses `/workspaces`, which is the shared volume). Keep `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS` aligned with the same directories. The server health endpoint reports sandbox readiness, so a missing Docker socket or sandbox image makes the container unhealthy.
 
 Stop the stack with `docker compose down`. Remove data with `docker compose down -v`.
 

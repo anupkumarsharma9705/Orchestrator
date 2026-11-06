@@ -16,6 +16,29 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Build the sandbox image once and exit. The server waits for this service
+  # and its health indicator checks that the image exists.
+  sandbox-image:
+    build:
+      context: ./engine-sandbox/src/main/resources/docker
+      dockerfile: Dockerfile
+    image: orchestrator/sandbox:1.0.0
+    command: ["/bin/true"]
+    restart: "no"
+
+  # The server and sandbox containers are siblings. Give the shared workspace
+  # volume to the server user so project files can be created and mounted.
+  workspace-init:
+    image: orchestrator/sandbox:1.0.0
+    user: "0:0"
+    command: ["/bin/sh", "-c", "mkdir -p /workspaces && chown -R 1001:1001 /workspaces"]
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+    volumes:
+      - orchestrator-workspace:/workspaces
+    restart: "no"
+
   orchestrator-server:
     build:
       context: .
@@ -23,6 +46,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      sandbox-image:
+        condition: service_completed_successfully
+      workspace-init:
+        condition: service_completed_successfully
     ports:
       - "${ORCHESTRATOR_PORT:-8443}:8443"
     environment:
@@ -34,27 +61,41 @@ services:
       SSL_TRUST_STORE: /certs/truststore.p12
       SSL_KEY_STORE_PASSWORD: ${CERT_PASSWORD:?CERT_PASSWORD is required}
       SSL_TRUST_STORE_PASSWORD: ${CERT_PASSWORD:?CERT_PASSWORD is required}
-      # NVIDIA is the default provider. OpenRouter is implemented but disabled
-      # unless ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED=true.
+      # OpenRouter is enabled by default and becomes available as soon as a
+      # key is present. NVIDIA and Ollama remain optional providers.
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED: ${ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED:-false}
+      ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED: ${ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED:-true}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Projects and sandbox mounts both live below the shared volume.
+      ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS: /workspaces
+      ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS: /workspaces
+      ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME: ${ORCHESTRATOR_WORKSPACE_VOLUME:-orchestrator-workspace}
+      ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME_ROOT: /workspaces
     volumes:
       - ./certs:/certs:ro
+      - orchestrator-workspace:/workspaces
+      # Local-development convenience only. Mounting the host socket gives
+      # the server root-equivalent control of the host. For production, use a
+      # dedicated or remote Docker daemon over TLS instead (see docs).
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The server container runs as uid 1001. Docker Desktop usually exposes
+    # the socket as root:root; Linux hosts use the docker group. Set DOCKER_GID
+    # to the socket's group id when it is not 0.
+    group_add:
+      - "${DOCKER_GID:-0}"
     healthcheck:
-      # Full TLS handshake with the client certificate proves both the server
-      # and the mTLS configuration are ready. The JRE image ships without a
-      # shell HTTP client that can present a PKCS12 client certificate.
+      # Application-level health over mTLS, not just a TLS handshake. The
+      # response is DOWN when the database, migrations, sandbox, or image are
+      # unhealthy.
       test:
         - CMD-SHELL
         - >-
-          umask 077 &&
-          openssl pkcs12 -in /certs/client-keystore.p12
-          -passin pass:$$SSL_KEY_STORE_PASSWORD -nodes -out /tmp/health-client.pem 2>/dev/null &&
-          echo | timeout 5 openssl s_client -connect 127.0.0.1:8443
-          -CAfile /certs/ca.crt -cert /tmp/health-client.pem -key /tmp/health-client.pem
-          -verify_return_error -brief >/dev/null 2>&1
+          curl -fsS --max-time 5 --cert-type P12
+          --cert "/certs/client-keystore.p12:$${SSL_KEY_STORE_PASSWORD}"
+          --cacert /certs/ca.crt
+          https://localhost:8443/actuator/health
+          | grep -q '"status":"UP"'
       interval: 10s
       timeout: 8s
       retries: 18
@@ -63,3 +104,5 @@ services:
 
 volumes:
   postgres-data:
+  orchestrator-workspace:
+    name: ${ORCHESTRATOR_WORKSPACE_VOLUME:-orchestrator-workspace}

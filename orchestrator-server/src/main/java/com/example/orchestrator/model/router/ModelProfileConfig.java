@@ -21,7 +21,7 @@ public record ModelProfileConfig(
             case PLANNER -> new ModelProfileConfig(profile, "openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free", 0.1, 4096, 0.9, null, 
                 "You are an expert software architect. Create detailed, actionable implementation plans.", true, 
                 java.util.List.of(ModelProfile.CODER, ModelProfile.GENERAL), Map.of());
-            case CODER -> new ModelProfileConfig(profile, "openrouter", "poolside/laguna-s-2.1:free", 0.2, 8192, 0.95, null,
+            case CODER -> new ModelProfileConfig(profile, "openrouter", "cohere/north-mini-code:free", 0.2, 8192, 0.95, null,
                 "You are an expert software engineer. Write clean, correct, production-ready code.", true,
                 java.util.List.of(ModelProfile.REVIEWER, ModelProfile.GENERAL), Map.of());
             case REVIEWER -> new ModelProfileConfig(profile, "openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free", 0.1, 4096, 0.9, null,
@@ -33,7 +33,7 @@ public record ModelProfileConfig(
             case DOCUMENTATION -> new ModelProfileConfig(profile, "openrouter", "cohere/north-mini-code:free", 0.3, 4096, 0.9, null,
                 "You are a technical writer. Create clear, accurate documentation.", true,
                 java.util.List.of(ModelProfile.GENERAL), Map.of());
-            case GENERAL -> new ModelProfileConfig(profile, "openrouter", "z-ai/glm-5.2:free", 0.5, 4096, 0.95, null,
+            case GENERAL -> new ModelProfileConfig(profile, "openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free", 0.5, 4096, 0.95, null,
                 "You are a helpful AI assistant.", true,
                 java.util.List.of(), Map.of());
         };

@@ -1,6 +1,7 @@
 # Sandbox Docker Image
 # Contains: JDK 21, Maven 3.9+, Scanners (SpotBugs, Checkstyle, OWASP DepCheck, Trivy, Semgrep)
-# Runs as non-root user (1000:1000)
+# Runs as non-root user (1001:1001), matching the server container so both can
+# read and write the shared workspace volume.
 
 FROM eclipse-temurin:21-jdk-alpine AS base
 
@@ -54,16 +55,16 @@ RUN curl -fsSL https://github.com/checkstyle/checkstyle/releases/download/checks
     && chmod +x /usr/local/bin/checkstyle
 
 # Create non-root user
-RUN addgroup -g 1000 -S appgroup && \
-    adduser -u 1000 -S sandbox -G appgroup -h /home/sandbox -s /bin/bash
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S sandbox -G appgroup -h /home/sandbox -s /bin/bash
 
 # Create workspace and Maven cache directories owned by the sandbox user.
 # The Maven cache volume is mounted at /home/sandbox/.m2 by SandboxService.
 RUN mkdir -p /workspace /home/sandbox/.m2 && \
-    chown -R 1000:1000 /workspace /home/sandbox
+    chown -R 1001:1001 /workspace /home/sandbox
 
 # Switch to non-root user
-USER 1000:1000
+USER 1001:1001
 
 # Set working directory
 WORKDIR /workspace

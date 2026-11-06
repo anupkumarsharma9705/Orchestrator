@@ -53,10 +53,25 @@ When a Docker daemon is available, `engine-sandbox` runs builds with:
 --security-opt no-new-privileges
 ```
 
-The sandbox image runs as uid/gid `1000:1000`. Workspaces are only mounted when
+The sandbox image runs as uid/gid `1001:1001` so it can share the workspace
+volume with the server container. Workspaces are only mounted when
 they resolve below a configured `workspace-roots` entry. If Docker is
 unreachable, sandbox operations **fail closed**: they return an error and never
 fall back to running the command on the host.
+
+When the server runs in a container (the Compose stack), it does not bind the
+container path directly: the Docker daemon resolves bind sources on the host,
+not in the server's mount namespace. Instead the server and sandbox share a
+named workspace volume. The server inspects that volume to find its
+daemon-side mountpoint, then binds only the project subdirectory into the
+sandbox. The Compose stack also builds the sandbox image and mounts the host
+Docker socket. That socket grants root-equivalent host control, so it is a
+development-only convenience; production deployments should use a dedicated or
+remote Docker daemon over TLS.
+
+`/actuator/health` includes a `sandbox` contributor. It reports `DOWN` when the
+daemon is unreachable, the configured sandbox image is missing, the shared
+workspace volume is missing, or the workspace filesystem is unhealthy.
 
 ### Application
 
@@ -102,6 +117,9 @@ orchestrator:
   sandbox:
     docker-image: orchestrator/sandbox:1.0.0
     workspace-roots: ["/srv/orchestrator/workspaces"]
+    # Containerized server: share a named volume instead of a host bind path.
+    workspace-volume: orchestrator-workspace
+    workspace-volume-root: /workspaces
     enable-network: false
     allowed-registries: ["docker.io", "ghcr.io"]
     denied-image-patterns: ["*:latest", "malicious/*"]

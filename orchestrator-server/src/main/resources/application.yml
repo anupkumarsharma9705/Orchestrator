@@ -17,6 +17,11 @@ spring:
       max-lifetime: 1800000
       validation-timeout: 5000
       leak-detection-threshold: 60000
+      # SEC-05: idempotent Flyway DDL (IF NOT EXISTS) emits a PostgreSQL
+      # NOTICE for every object that already exists. Those notices are logged
+      # as WARN and bury real migration errors. Suppress NOTICE for every
+      # pooled session; PostgreSQL remains the production database.
+      connection-init-sql: "SET client_min_messages TO WARNING"
   jpa:
     hibernate:
       ddl-auto: validate
@@ -168,6 +173,11 @@ orchestrator:
   sandbox:
     docker-image: ${ORCHESTRATOR_SANDBOX_IMAGE:orchestrator/sandbox:1.0.0}
     workspace-roots: ${ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS:${user.home}/.orchestrator/workspaces}
+    # When the server itself runs in a container, sandbox containers are
+    # siblings and must mount the same named volume instead of a host bind
+    # path the daemon cannot see. Empty keeps direct host bind mounts.
+    workspace-volume: ${ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME:}
+    workspace-volume-root: ${ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME_ROOT:/workspaces}
     enable-network: ${ORCHESTRATOR_SANDBOX_ENABLE_NETWORK:false}
   security:
     # Only enable behind a reverse proxy you control. When false, client IPs
@@ -216,16 +226,20 @@ orchestrator:
         supports-streaming: true
 
       openrouter:
-        enabled: false
+        # Enabled by default; isAvailable() stays false until a key is set.
+        enabled: ${ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED:true}
         base-url: https://openrouter.ai/api/v1
         api-key: ${OPENROUTER_API_KEY:}
+        # Per-profile model identifiers used when OpenRouter executes the
+        # request. These must be valid OpenRouter model slugs; the profiles
+        # above use NVIDIA identifiers for the primary provider.
         models:
-          planner: nvidia/nemotron-3-ultra-550b-a55b
-          coder: poolside/laguna-s-2.1:free
+          planner: nvidia/nemotron-3-ultra-550b-a55b:free
+          coder: cohere/north-mini-code:free
           reviewer: nvidia/nemotron-3-ultra-550b-a55b:free
           security: nvidia/nemotron-3-ultra-550b-a55b:free
           docs: cohere/north-mini-code:free
-          general: z-ai/glm-5.2:free
+          general: nvidia/nemotron-3-ultra-550b-a55b:free
         rate-limit-rpm: 60
         timeout-seconds: 60
         supports-streaming: true

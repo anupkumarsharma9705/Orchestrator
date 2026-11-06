@@ -6,6 +6,9 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+    hikari:
+      # The production init SQL is PostgreSQL-specific; tests use H2.
+      connection-init-sql: "SELECT 1"
   jpa:
     hibernate:
       ddl-auto: create-drop
@@ -19,6 +22,13 @@ spring:
     enabled: false
     locations: classpath:db/orchestrator/migration
     baseline-on-migrate: true
+
+management:
+  health:
+    sandbox:
+      # Tests do not run a Docker daemon; the sandbox indicator would always
+      # be DOWN and is unrelated to the behavior under test.
+      enabled: false
 
 orchestrator:
   cli:

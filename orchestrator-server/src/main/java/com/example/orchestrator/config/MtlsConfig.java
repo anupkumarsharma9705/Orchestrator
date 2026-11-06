@@ -46,7 +46,8 @@ public class MtlsConfig {
     public FilterRegistrationBean<ClientCertificateFilter> clientCertificateFilter() {
         FilterRegistrationBean<ClientCertificateFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new ClientCertificateFilter());
-        registration.addUrlPatterns("/api/**");
+        // Servlet spec path mappings must use a single trailing '*'.
+        registration.addUrlPatterns("/api/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 5); // After security filter
         return registration;
     }

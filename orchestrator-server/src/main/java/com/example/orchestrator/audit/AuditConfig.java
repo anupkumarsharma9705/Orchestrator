@@ -58,7 +58,9 @@ public class AuditConfig {
     public FilterRegistrationBean<AuditFilter> auditFilter() {
         FilterRegistrationBean<AuditFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new AuditFilter(this));
-        registration.addUrlPatterns("/api/**", "/actuator/**");
+        // Servlet spec path mappings end with a single '*'. "/api/**" is not
+        // a valid mapping and silently matches nothing.
+        registration.addUrlPatterns("/api/*", "/actuator/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 20);
         registration.setEnabled(enabled);
         return registration;

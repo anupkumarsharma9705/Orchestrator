@@ -250,7 +250,31 @@ public class SandboxService {
             
             // Verify we can list containers (basic API functionality)
             dockerClient.listContainersCmd().exec();
-            
+
+            // The sandbox is not usable unless its image has been built or
+            // pulled. Check it explicitly so health checks catch a missing
+            // image instead of only proving that the daemon is reachable.
+            try {
+                dockerClient.inspectImageCmd(config.getDockerImage()).exec();
+            } catch (Exception e) {
+                return new HealthCheckResult(false,
+                    "Sandbox image not available: " + config.getDockerImage(),
+                    Instant.now());
+            }
+
+            // A containerized server mounts its projects from a shared named
+            // volume. A missing volume means no project can be mounted.
+            String workspaceVolume = config.getWorkspaceVolume();
+            if (workspaceVolume != null && !workspaceVolume.isBlank()) {
+                try {
+                    dockerClient.inspectVolumeCmd(workspaceVolume).exec();
+                } catch (Exception e) {
+                    return new HealthCheckResult(false,
+                        "Sandbox workspace volume not available: " + workspaceVolume,
+                        Instant.now());
+                }
+            }
+
             // Check disk space for the first configured workspace root
             var workspaceBase = allowedWorkspaceRoots.get(0).toFile();
             long freeSpace = workspaceBase.getFreeSpace();
@@ -703,8 +727,13 @@ public class SandboxService {
 
         // docker-java's withBinds replaces the existing array, so both mounts
         // must be supplied in a single call.
+        Bind workspaceBind = createWorkspaceBind(workspacePath);
+        if (workspaceBind == null) {
+            throw new IllegalStateException(
+                "Workspace is outside the shared sandbox volume root: " + workspacePath);
+        }
         List<Bind> binds = new ArrayList<>();
-        binds.add(Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":rw"));
+        binds.add(workspaceBind);
         binds.add(Bind.parse(mavenCacheVolume + ":/home/sandbox/.m2:rw"));
 
         HostConfig hostConfig = HostConfig.newHostConfig()
@@ -724,7 +753,9 @@ public class SandboxService {
             // Writable scratch/cache locations. Everything else stays read-only.
             .withTmpFs(Map.of(
                 "/tmp", "rw,nosuid,nodev,size=512m,mode=1777",
-                "/home/sandbox/.cache", "rw,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=0755"))
+                // Match the sandbox image user (1001) so the tmpfs is writable
+                // while the root filesystem stays read-only.
+                "/home/sandbox/.cache", "rw,nosuid,nodev,size=1g,uid=1001,gid=1001,mode=0755"))
             // Drop ALL capabilities by default
             .withCapDrop(Capability.ALL)
             // Add only explicitly allowed capabilities (if any)
@@ -744,6 +775,75 @@ public class SandboxService {
             .withAttachStderr(true)
             .withTty(false)
             .exec();
+    }
+
+    /**
+     * Builds the workspace mount for a sandbox container.
+     *
+     * <p>When no shared volume is configured the server runs on the Docker
+     * host and the workspace can be bind-mounted directly. When a shared
+     * volume is configured (the compose stack), the sandbox container is a
+     * sibling of the server container. The daemon resolves the named volume
+     * to its own host mountpoint, and the sandbox bind-mounts only the
+     * project subdirectory from there. A direct bind of the server's
+     * container path would point at a path the daemon cannot see, and the
+     * legacy {@code volume/subpath} syntax is not a valid volume name.</p>
+     */
+    Bind createWorkspaceBind(Path workspacePath) {
+        String volume = config.getWorkspaceVolume();
+        if (volume == null || volume.isBlank()) {
+            return Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":rw");
+        }
+
+        Path volumeRoot;
+        try {
+            volumeRoot = Path.of(config.getWorkspaceVolumeRoot()).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            log.warn("Invalid sandbox workspace volume root '{}': {}",
+                config.getWorkspaceVolumeRoot(), e.getMessage());
+            return null;
+        }
+
+        Path absoluteWorkspace = workspacePath.toAbsolutePath().normalize();
+        if (!absoluteWorkspace.startsWith(volumeRoot)) {
+            log.warn("Workspace {} is outside the shared sandbox volume root {}",
+                absoluteWorkspace, volumeRoot);
+            return null;
+        }
+
+        String volumeMountpoint = resolveWorkspaceVolumeMountpoint(volume);
+        if (volumeMountpoint == null || volumeMountpoint.isBlank()) {
+            log.warn("Could not resolve the host mountpoint for shared sandbox volume '{}'", volume);
+            return null;
+        }
+
+        Path relative = volumeRoot.relativize(absoluteWorkspace);
+        String mountpoint = volumeMountpoint.replace('\\', '/');
+        while (mountpoint.endsWith("/")) {
+            mountpoint = mountpoint.substring(0, mountpoint.length() - 1);
+        }
+        String source = relative.toString().isEmpty()
+            ? mountpoint
+            : mountpoint + "/" + relative.toString().replace('\\', '/');
+        return Bind.parse(source + ":" + config.getWorkspaceMountPath() + ":rw");
+    }
+
+    /**
+     * Resolves a named Docker volume to the path where the daemon can bind it.
+     * Package-private for testing; returns null when Docker is unavailable or
+     * the volume does not exist, which makes the sandbox fail closed.
+     */
+    String resolveWorkspaceVolumeMountpoint(String volume) {
+        if (dockerClient == null) {
+            return null;
+        }
+        try {
+            var response = dockerClient.inspectVolumeCmd(volume).exec();
+            return response.getMountpoint();
+        } catch (Exception e) {
+            log.warn("Could not inspect shared sandbox volume '{}': {}", volume, e.getMessage());
+            return null;
+        }
     }
 
     /**

@@ -85,10 +85,9 @@ development certificates, and writes `~/.companion/config.yaml` so the CLI can
 connect. See the repository README for the full server workflow and the
 required `ORCHESTRATOR_API_KEY` (at least 32 characters).
 
-Online generation additionally requires a model-provider key. NVIDIA is the
-default provider (`NVIDIA_API_KEY`). OpenRouter (`OPENROUTER_API_KEY`) and
-local Ollama are implemented but disabled by default and must be enabled in the
-server configuration. The server starts without provider keys, but generation
+Online generation additionally requires a model-provider key. OpenRouter is
+enabled by default (`OPENROUTER_API_KEY`); NVIDIA (`NVIDIA_API_KEY`) and local
+Ollama are optional. The server starts without provider keys, but generation
 requests then fail with `No available providers`.
 
 ## Configuration

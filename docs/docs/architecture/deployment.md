@@ -17,8 +17,8 @@ title: Architecture - Deployment
 | TLS key store + trust store | HTTPS and mTLS | The server refuses insecure defaults |
 | `ORCHESTRATOR_API_KEY` | REST API authentication | At least 32 characters |
 | Workspace roots | Project registration and sandbox mounts | Usually `~/.orchestrator/workspaces`; must already exist |
-| Docker daemon | Build, test, and scanner sandbox | Sandbox fails closed when unreachable |
-| Model provider key | Online generation | NVIDIA is the default |
+| Docker daemon | Build, test, and scanner sandbox | Sandbox fails closed when unreachable; readiness is reported by `/actuator/health` |
+| Model provider key | Online generation | OpenRouter is enabled by default; NVIDIA and Ollama are optional |
 
 The server also writes audit events to `orchestrator-audit.log` in its working
 directory and stores artifacts under `orchestrator.store.base-path` (default
@@ -51,11 +51,27 @@ database with `SPRING_DATASOURCE_URL`.
 ## Run with Docker Compose
 
 The repository `docker-compose.yml` is a single-node development stack. It runs
-PostgreSQL and the server with mTLS, and it intentionally does **not** mount the
-Docker socket. Because the sandbox fails closed, build, test, and scanner tools
-return an error in this stack instead of running on the server host. Provide a
-sandbox-capable Docker daemon (or run those operations elsewhere) if you need
-them.
+PostgreSQL and the server with mTLS, builds `orchestrator/sandbox:1.0.0`, mounts
+the host Docker socket, and shares a named workspace volume between the server
+and sandbox containers. Build, test, and scanner tools therefore work.
+
+**Security boundary:** mounting the Docker socket gives the server
+root-equivalent control of the host. Use this stack only on a developer machine.
+For production, remove the socket mount and configure a dedicated or remote
+Docker daemon with TLS:
+
+```yaml
+orchestrator:
+  sandbox:
+    docker-host: tcp://docker.example.internal:2376
+    client-cert-path: /run/secrets/docker-client.crt
+    client-key-path: /run/secrets/docker-client.key
+    ca-cert-path: /run/secrets/docker-ca.crt
+```
+
+The sandbox still fails closed if that daemon is unreachable. On Linux, set
+`DOCKER_GID` to the group id of `/var/run/docker.sock` when it is not root
+(`stat -c '%g' /var/run/docker.sock`).
 
 ```bash
 cp .env.example .env
@@ -86,18 +102,23 @@ Optional:
 
 | Variable | Description |
 |----------|-------------|
-| `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS` | Comma-separated directories that may be registered as projects (default `~/.orchestrator/workspaces`) |
+| `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS` | Comma-separated directories that may be registered as projects (default `~/.orchestrator/workspaces`; Compose uses `/workspaces`) |
 | `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS` | Comma-separated directories that may be mounted into the sandbox; keep aligned with the workspace allow-list |
 | `ORCHESTRATOR_SANDBOX_IMAGE` | Sandbox image (default `orchestrator/sandbox:1.0.0`) |
+| `ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME` | Named Docker volume used instead of host bind mounts when the server runs in a container (Compose default `orchestrator-workspace`) |
+| `ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME_ROOT` | Container mount point for that volume (Compose default `/workspaces`) |
 | `ORCHESTRATOR_SANDBOX_ENABLE_NETWORK` | Allow container networking (default `false`) |
 | `ORCHESTRATOR_TRUST_FORWARDED_HEADERS` | Trust `X-Forwarded-For` / `X-Real-IP`; enable only behind a proxy you control (default `false`) |
-| `NVIDIA_API_KEY` | Default model provider |
-| `OPENROUTER_API_KEY` | OpenRouter key; also set `ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED=true` |
+| `OPENROUTER_API_KEY` | OpenRouter key; the provider is enabled by default |
+| `ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED` | Set `false` to disable OpenRouter explicitly (default `true`) |
+| `NVIDIA_API_KEY` | Optional NVIDIA provider |
 | `ORCHESTRATOR_PORT` | Host port for Compose (default `8443`) |
 | `CERT_PASSWORD` | Password used by the Compose stack for both stores |
 
 The server starts without provider keys. Generation requests then fail with
-`No available providers`.
+`No available providers`. OpenRouter is enabled by default and becomes
+available as soon as `OPENROUTER_API_KEY` is set. Provider readiness is
+reported by the authenticated `/api/health/providers` endpoint.
 
 To give different clients narrower permissions, configure additional keys
 under `orchestrator.security.api-keys` instead of sharing the bootstrap key:
@@ -117,8 +138,11 @@ orchestrator:
 ## Health and metrics
 
 ```bash
-# Public health endpoint
-curl --cacert certs/ca.crt https://localhost:8443/actuator/health
+# Application health over mTLS. Includes database, migrations, and sandbox
+# readiness (Docker daemon, sandbox image, and shared workspace volume).
+curl --cacert certs/ca.crt \
+  --cert-type P12 --cert "certs/client-keystore.p12:$CERT_PASSWORD" \
+  https://localhost:8443/actuator/health
 
 # Prometheus metrics (authenticated)
 curl --cacert certs/ca.crt \
@@ -135,6 +159,11 @@ when the server is running.
 Flyway migrations live under `db/orchestrator/migration` and run at startup.
 Hibernate is configured with `ddl-auto: validate`; schema changes belong in a
 new migration, never in entity annotations alone.
+
+The migrations use idempotent `IF NOT EXISTS` DDL. PostgreSQL reports every
+already-present object as a `NOTICE`; the Hikari pool sets
+`client_min_messages=warning` so those notices do not appear as Flyway warnings
+and hide real migration errors.
 
 ## Backup
 

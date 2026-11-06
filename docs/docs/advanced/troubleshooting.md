@@ -281,6 +281,11 @@ curl --cacert certs/ca.crt \
 
 # Provider settings live on the server, not in the CLI config
 docker compose exec orchestrator-server env | grep -E 'NVIDIA|OPENROUTER|OLLAMA'
+# OpenRouter is enabled by default; an empty key leaves it unavailable.
+# Sandbox health is included in the public health endpoint:
+curl --cacert certs/ca.crt \
+  --cert-type P12 --cert "certs/client-keystore.p12:$CERT_PASSWORD" \
+  https://localhost:8443/actuator/health
 ```
 
 ## Getting Help
