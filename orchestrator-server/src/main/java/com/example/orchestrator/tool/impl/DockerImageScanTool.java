@@ -13,9 +13,20 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 @Component
 public class DockerImageScanTool implements Tool {
+
+    /**
+     * Registry host (with optional port), repository path, tag and digest.
+     * Anchored so a leading dash cannot smuggle extra Trivy flags.
+     */
+    private static final Pattern SAFE_IMAGE_PATTERN = Pattern.compile(
+        "^[a-zA-Z0-9][a-zA-Z0-9._-]*(?::[0-9]{1,5})?"
+            + "(?:/[a-zA-Z0-9][a-zA-Z0-9._-]*)*"
+            + "(?::[a-zA-Z0-9][a-zA-Z0-9._-]{0,127})?"
+            + "(?:@sha256:[a-fA-F0-9]{64})?$");
 
     private final ObjectMapper objectMapper;
 
@@ -75,6 +86,10 @@ public class DockerImageScanTool implements Tool {
             String image = params.image;
             if (image == null || image.isBlank()) {
                 return ToolResult.failure("dockerImageScan", "Image name is required", System.currentTimeMillis() - start);
+            }
+            if (!SAFE_IMAGE_PATTERN.matcher(image).matches()) {
+                return ToolResult.failure("dockerImageScan", "Invalid image reference: " + image,
+                    System.currentTimeMillis() - start);
             }
             
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 180;

@@ -76,6 +76,10 @@ public class RunMavenTestTool implements Tool {
             String mvnCmd = Files.exists(mvnwCmd) ? "mvnw.cmd" : (Files.exists(mvnw) ? "./mvnw" : "mvn");
             
             List<String> goals = params.goals != null && !params.goals.isEmpty() ? params.goals : List.of("test");
+            String goalError = MavenGoalValidator.validate(goals);
+            if (goalError != null) {
+                return ToolResult.failure("runMavenTest", goalError, System.currentTimeMillis() - start);
+            }
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 120;
             
             List<String> command = new ArrayList<>();

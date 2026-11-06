@@ -19,7 +19,15 @@ import java.util.regex.Pattern;
 public class TrivyScanTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private static final Pattern SAFE_TARGET_PATTERN = Pattern.compile("^[a-zA-Z0-9._/-]+$");
+    /**
+     * Image reference: registry host with optional port, repository path, tag
+     * and digest. Anchored so a leading dash cannot smuggle Trivy flags.
+     */
+    private static final Pattern SAFE_TARGET_PATTERN = Pattern.compile(
+        "^[a-zA-Z0-9][a-zA-Z0-9._-]*(?::[0-9]{1,5})?"
+            + "(?:/[a-zA-Z0-9][a-zA-Z0-9._-]*)*"
+            + "(?::[a-zA-Z0-9][a-zA-Z0-9._-]{0,127})?"
+            + "(?:@sha256:[a-fA-F0-9]{64})?$");
 
     public TrivyScanTool(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
@@ -86,7 +94,7 @@ public class TrivyScanTool implements Tool {
             
             String target = params.target != null ? params.target : "fs";
             if (!"fs".equals(target) && !SAFE_TARGET_PATTERN.matcher(target).matches()) {
-                return ToolResult.failure("trivyScan", "Invalid target (only alphanumeric, ., _, /, - allowed): " + target, System.currentTimeMillis() - start);
+                return ToolResult.failure("trivyScan", "Invalid image reference: " + target, System.currentTimeMillis() - start);
             }
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 180;
             

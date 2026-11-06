@@ -84,6 +84,10 @@ public class RunMavenBuildTool implements Tool {
             }
             
             List<String> goals = params.goals != null && !params.goals.isEmpty() ? params.goals : List.of("compile");
+            String goalError = MavenGoalValidator.validate(goals);
+            if (goalError != null) {
+                return ToolResult.failure("runMavenBuild", goalError, System.currentTimeMillis() - start);
+            }
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 180;
             boolean skipTests = params.skipTests != null && params.skipTests;
             

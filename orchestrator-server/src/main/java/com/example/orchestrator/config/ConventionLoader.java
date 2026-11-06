@@ -1,7 +1,9 @@
 package com.example.orchestrator.config;
 
 import org.springframework.stereotype.Component;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,7 +16,7 @@ import java.util.Optional;
 @Component
 public class ConventionLoader {
 
-    private final Yaml yaml = new Yaml();
+    private final Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
 
     public ProjectConventions load(Path conventionsFile) throws IOException {
         try (InputStream is = Files.newInputStream(conventionsFile)) {

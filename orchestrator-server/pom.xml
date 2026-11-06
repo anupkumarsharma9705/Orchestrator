@@ -17,6 +17,25 @@
 		<java.version>21</java.version>
 		<sqlite-jdbc.version>3.46.0.0</sqlite-jdbc.version>
 	</properties>
+	<dependencyManagement>
+		<dependencies>
+			<!-- Override the Spring Boot managed versions with patched releases. -->
+			<dependency>
+				<groupId>com.fasterxml.jackson</groupId>
+				<artifactId>jackson-bom</artifactId>
+				<version>2.21.7</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<dependency>
+				<groupId>io.opentelemetry</groupId>
+				<artifactId>opentelemetry-bom</artifactId>
+				<version>1.67.0</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 	<dependencies>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -138,22 +157,20 @@
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
 			<artifactId>opentelemetry-api</artifactId>
-			<version>1.41.0</version>
 		</dependency>
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
 			<artifactId>opentelemetry-sdk</artifactId>
-			<version>1.41.0</version>
 		</dependency>
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
 			<artifactId>opentelemetry-exporter-otlp</artifactId>
-			<version>1.41.0</version>
 		</dependency>
+		<!-- Last published release; the Zipkin exporter was removed from the OTel BOM after 1.64.0. -->
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
 			<artifactId>opentelemetry-exporter-zipkin</artifactId>
-			<version>1.41.0</version>
+			<version>1.64.0</version>
 		</dependency>
 
 		<dependency>

@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 public class SemgrepScanTool implements Tool {
 
     private final ObjectMapper objectMapper;
-    private static final Pattern SAFE_CONFIG_PATTERN = Pattern.compile("^[a-zA-Z0-9._/-]+$");
+    private static final Pattern SAFE_CONFIG_PATTERN = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9._/-]*$");
 
     public SemgrepScanTool(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;

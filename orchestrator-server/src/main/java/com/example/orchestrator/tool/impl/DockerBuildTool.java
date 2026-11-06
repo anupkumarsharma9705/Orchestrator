@@ -89,7 +89,10 @@ public class DockerBuildTool implements Tool {
             if (!SAFE_DOCKERFILE_PATTERN.matcher(dockerfile).matches()) {
                 return ToolResult.failure("dockerBuild", "Invalid dockerfile name: " + dockerfile, System.currentTimeMillis() - start);
             }
-            Path dockerfilePath = targetPath.resolve(dockerfile);
+            Path dockerfilePath = targetPath.resolve(dockerfile).normalize();
+            if (!dockerfilePath.startsWith(targetPath)) {
+                return ToolResult.failure("dockerBuild", "Dockerfile path traversal attempt denied", System.currentTimeMillis() - start);
+            }
             if (!Files.exists(dockerfilePath)) {
                 return ToolResult.failure("dockerBuild", "Dockerfile not found: " + dockerfile, System.currentTimeMillis() - start);
             }
