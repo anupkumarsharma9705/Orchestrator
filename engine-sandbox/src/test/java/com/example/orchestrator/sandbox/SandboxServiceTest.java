@@ -125,6 +125,14 @@ class SandboxServiceTest {
     }
 
     @Test
+    void defaultDockerHost_isInDefaultAllowList() {
+        SandboxConfig config = new SandboxConfig();
+        // Must not throw: a platform default that is not allow-listed makes
+        // SandboxService fail startup on that platform.
+        config.validateDockerHost(config.getDockerHost());
+    }
+
+    @Test
     void validateDockerHost_acceptsAllowedUnixSocket() {
         config = createValidTestConfig();
         config.validateDockerHost("unix:///var/run/docker.sock");

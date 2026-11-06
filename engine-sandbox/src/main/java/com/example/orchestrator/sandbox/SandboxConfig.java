@@ -72,16 +72,24 @@ public class SandboxConfig {
                 : "unix:///var/run/docker.sock";
     }
 
-    /** 
+    /**
      * Allowed Docker socket paths. Prevents socket hijacking.
-     * Unix: ["unix:///var/run/docker.sock", "unix:///run/docker.sock"]
-     * Windows: ["npipe:////./pipe/docker_engine"]
-     * TCP: ["tcp://localhost:2376"] (requires TLS)
+     *
+     * <p>The list must contain the platform default returned by
+     * {@link #defaultDockerHost()}, otherwise startup fails validation on that
+     * platform. Unix and named-pipe entries are inert when not present.</p>
+     *
+     * Unix: {@code unix:///var/run/docker.sock}, {@code unix:///run/docker.sock}<br>
+     * Windows: {@code npipe:////./pipe/docker_engine},
+     * {@code npipe:////./pipe/dockerDesktopLinuxEngine}<br>
+     * TCP: {@code tcp://localhost:2376} (requires TLS)
      */
     private List<String> allowedDockerHosts = List.of(
         "tcp://localhost:2376",
         "npipe:////./pipe/docker_engine",
-        "npipe:////./pipe/dockerDesktopLinuxEngine"
+        "npipe:////./pipe/dockerDesktopLinuxEngine",
+        "unix:///var/run/docker.sock",
+        "unix:///run/docker.sock"
     );
 
     /** Require TLS for TCP Docker connections */

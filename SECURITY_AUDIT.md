@@ -82,9 +82,9 @@
 
 Verification after remediation:
 
-- `mvn -B -ntp clean verify` — **BUILD SUCCESS** across all 12 modules; server 62 tests (1 skipped), CLI 35 tests, `engine-sandbox` 32 tests.
+- `mvn -B -ntp clean verify` — **BUILD SUCCESS** across all 12 modules; server 62 tests (1 skipped), CLI 35 tests, `engine-sandbox` 33 tests.
 - Targeted server tests (ProjectManager, container validation, tool tests) — passed.
-- `engine-sandbox` tests — 32 passed.
+- `engine-sandbox` tests — 33 passed, including a regression test that the platform default Docker host is present in the default allow-list.
 - Spring context tests (`FreshOrchestratorApplicationTests`, `JpaRepositoriesContextTest`, `ApiKeyRequirementsTest`) — passed.
 - `npm audit` in `docs/` — 5 low advisories (all `deepmerge`).
 - `npm run build` in `docs/` — **SUCCESS**.
