@@ -3,7 +3,7 @@
 - **Target:** `D:\ANUP\WASTE\orchestrator\orchestrator`
 - **Baseline commit:** `1dbe52b Harden orchestrator for early-access release` (plus the remediation changes described below)
 - **Audit dates:** 2026-11-05 to 2026-11-06
-- **Remediation pass:** 2026-11-07 (SEC-07 to SEC-13)
+- **Remediation passes:** 2026-11-07 (SEC-07 to SEC-13), 2026-11-07 (SEC-14 to SEC-18)
 - **Official CSO run:** `1793846202085-fc2e19d4905f0934` — finished as **partial** (static-only)
 - **Supplementary scanners:** Gitleaks, Semgrep, OSV-Scanner (Docker) — **outside the CSO contract**
 
@@ -59,10 +59,10 @@
 | ID | Finding | Disposition |
 |---|---|---|
 | L-1 | Docs routes were outside the security filter chains (`/api/**`, `/actuator/**` only). | **Fixed** — a catch-all filter chain authenticates every path except the explicit public set (`/api/version`, health, info). Static docs, if served, therefore require authentication like any other non-public route. |
-| L-2 | Unencrypted `Socket` in `CertificatePinningManager.generatePinForHost` and the localhost port probe in `DoctorCommand`. | False positive / inert: the pinning method throws `UnsupportedOperationException`; the other socket is a localhost availability probe. Consider deleting the dead method. |
+| L-2 | Unencrypted `Socket` in `CertificatePinningManager.generatePinForHost` and the localhost port probe in `DoctorCommand`. | **Fixed** — the dead `generatePinForHost` method (which always threw) and its unused imports were removed. The remaining socket is a loopback-only availability probe with a bounded timeout; it carries no credentials. |
 | L-3 | Semgrep secret hits: AWS key literal and PGP block are detector patterns in `SecretScanner`; the template `JWT_SECRET` is an explicitly test-only placeholder. | No credential leak. Gitleaks independently found 0 leaks. |
 | L-4 | `ProcessBuilder` hits. | **Fixed for server tools** — `DependencyCheckTool`, Git tools and all Maven/scanner/Docker tools now use the sandbox. Residual: `DoctorCommand` (local diagnostics) and `engine-core` `Coder.compileAndVerify` (library code not invoked by the server execution path) still use host `ProcessBuilder` with fixed arguments. |
-| L-5 | No tracked `LICENSE`; README says MIT while manifests/config say Apache-2.0. | Open; resolve before publishing. |
+| L-5 | No tracked `LICENSE`; README says MIT while manifests/config say Apache-2.0. | **Fixed** — a tracked Apache-2.0 `LICENSE` was added, README now points to it, and the root POM, server POM, docs `package.json`, and lockfile declare Apache-2.0 consistently. |
 
 ### 2.4 Hardening pass SEC-07 to SEC-13
 
@@ -87,6 +87,22 @@ workflow). No Maven Central publication is configured: there are no production
 coordinates, signing credentials, or repository credentials for Central, and
 publishing is not implied by the local `release-signing` profile.
 
+### 2.5 Hardening pass SEC-14 to SEC-18
+
+| ID | Issue | Remediation | Verification |
+|---|---|---|---|
+| SEC-14 | `CertificatePinningManager.generatePinForHost` always threw `UnsupportedOperationException`, so callers had no usable API. | Deleted the dead method and the imports it alone used; the working TLS pin generator remains. | CLI module compiles; no references remain. |
+| SEC-15 | Windows CMD rendered box-drawing and status glyphs as `?` because the console code page cannot encode them. | New `TerminalSupport` checks `System.out.charset()` for every glyph the CLI uses and selects ASCII fallbacks when any sample is unencodable. `COMPANION_ASCII=1|true|yes` forces the fallback. Headings, tables, spinners, status markers, progress output, and command banners all use the selected glyphs; raw non-ASCII was removed from CLI main sources. | `TerminalSupportTest` — UTF-8 keeps Unicode, legacy code pages and ASCII force fallback, override wins. |
+| SEC-16 | No tracked `LICENSE`; README said MIT while distribution manifests said Apache-2.0. | Added the Apache-2.0 `LICENSE`; README, root POM, server POM, docs `package.json`, and docs lockfile now all declare Apache-2.0. | Metadata grep is consistent; `LICENSE` is tracked. |
+| SEC-17 | Outbound OkHttp client had no TLS configuration and could not trust a private CA. | `HttpClientConfig` builds an explicit `SSLContext` over the JVM default trust store and optionally adds a PKCS12/JKS trust store via `orchestrator.http.tls.trust-store`, `trust-store-password`, and `trust-store-type` (`ORCHESTRATOR_HTTP_TLS_TRUST_STORE*`). The custom store is additive: default CAs remain trusted, hostname verification is unchanged, and there is no trust-all mode. A missing or unreadable store fails startup instead of silently falling back. | `HttpClientConfigTest` — default client, additional store loading, and fail-closed missing store. |
+| SEC-18 | Database-URL secret pattern missed `postgresql://`, `mariadb://`, `sqlserver://`, `oracle://`, `sqlite://`, `jdbc:` prefixes, `mongodb+srv://`, and password query parameters. | The pattern now covers `jdbc:` plus `postgres`/`postgresql`, `mongodb`/`mongodb+srv`, `mysql`, `mariadb`, `redis`/`rediss`, `sqlserver`, `oracle`, `sqlite`, `db2`, `h2`, `clickhouse`, `snowflake`, `redshift`, `trino`, `presto`, and `neo4j`. A second pattern catches `password=`/`pwd=` query parameters; credential-free URLs are not flagged as password-bearing. | `SecretScannerTest` — 16 cases covering the added schemes, JDBC and SRV forms, query parameters, and a credential-free control. |
+
+**Audit identity consistency.** The audit filter previously resolved the client IP
+itself from the left-most `X-Forwarded-For` hop, bypassing the trusted-proxy
+rules used by rate limiting. It now injects the shared `ClientIpResolver`, so
+audit records, API-key throttling, and endpoint limits attribute requests to the
+same client identity. The spoofable local resolver was removed.
+
 ## 3. Remediation applied in this pass
 
 - `MavenGoalValidator` plus call-site checks in `runMavenBuild` / `runMavenTest`.
@@ -109,7 +125,13 @@ publishing is not implied by the local `release-signing` profile.
 - SEC-11: shared prompt normalization and match detection for sanitization and detection.
 - SEC-12: timeout/cache-backed `EgressDnsResolver`; DNS timeout fails closed.
 - SEC-13: CycloneDX SBOM, OWASP dependency-check CI job, GPG-signed release assets, and provenance attestation.
-- New/updated unit tests: `MavenGoalValidatorTest`, `ContainerReferenceValidationTest`, `ProjectManagerTest`, `SandboxServiceTest`, `SelfUpdateCommandTest`, `MtlsConfigTest`, `ClientIpResolverTest`, `TimeBoundedCharSequenceTest`, `EgressDnsResolverTest`, `EgressFilterTest`, `PromptSanitizerTest`.
+- SEC-14: removed the always-throwing `generatePinForHost` method.
+- SEC-15: `TerminalSupport` selects Unicode or ASCII glyphs from the actual stdout charset, with `COMPANION_ASCII` as an explicit override.
+- SEC-16: added the Apache-2.0 `LICENSE` and aligned README, POM, and docs npm metadata.
+- SEC-17: outbound OkHttp TLS with JVM default trust plus an optional additive private trust store; no trust-all path.
+- SEC-18: expanded database-URL secret detection and added query-parameter credential coverage.
+- Audit filter now resolves the client IP through the shared `ClientIpResolver` instead of its own left-most-hop parser.
+- New/updated unit tests: `MavenGoalValidatorTest`, `ContainerReferenceValidationTest`, `ProjectManagerTest`, `SandboxServiceTest`, `SelfUpdateCommandTest`, `MtlsConfigTest`, `ClientIpResolverTest`, `TimeBoundedCharSequenceTest`, `EgressDnsResolverTest`, `EgressFilterTest`, `PromptSanitizerTest`, `SecretScannerTest`, `TerminalSupportTest`, `HttpClientConfigTest`, `FilterRegistrationTest`.
 
 Verification after remediation:
 
@@ -122,6 +144,10 @@ Verification after remediation:
 - Server dependency tree — Jackson 2.21.7, OTel 1.67.0, Zipkin 1.64.0.
 - Targeted SEC-07 to SEC-12 tests — 21 tests passed (mTLS, client IP, regex deadline, egress DNS/filter, filter registration).
 - Full reactor after SEC-07 to SEC-13 (`mvn -B -ntp clean verify`) — **BUILD SUCCESS** across all 12 modules; 262 tests, 0 failures, 1 skipped (server 85, CLI 44).
+- Full reactor after SEC-14 to SEC-18 (`mvn -B -ntp clean verify`) — **BUILD SUCCESS** across all 12 modules; 286 tests, 0 failures, 1 skipped (server 88, CLI 49).
+- Targeted SEC-14 to SEC-18 tests — `SecretScannerTest` (16 cases), `TerminalSupportTest` (5), `HttpClientConfigTest` (3), plus `FilterRegistrationTest`, `ClientIpResolverTest`, and `SelfUpdateCommandTest` passed.
+- Offline generated project (`companion generate --offline --non-interactive`, with `COMPANION_ASCII=1`) — `mvn -B -ntp verify` **BUILD SUCCESS**; Checkstyle 0 violations, SpotBugs 0 warnings.
+- Working-tree secret scan — no `sk-or-v1-...` value outside excluded review/library material; `git diff --check` reports no whitespace errors.
 - Aggregate CycloneDX SBOM — generated at `target/sbom.json`, schema 1.5, 222 components, including all 12 reactor modules.
 
 ## 4. Remaining production-readiness blockers
@@ -131,7 +157,7 @@ Verification after remediation:
 3. **Deployment validation.** Docker Compose stack, mTLS stack, sandbox image, and a dockerized generated app remain untested. No live model-provider key has exercised online generation.
 4. **Supply chain execution and publication.** SBOM generation, dependency scanning, GPG signing, and provenance attestation are configured (SEC-13) but have not run in GitHub Actions from this environment. Maven Central publication and installer publication remain manual/external steps. Release secrets required: `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`; optional but recommended: `NVD_API_KEY`.
 5. **Data durability.** In-memory cost tracking; no backup/retention automation; no queue/worker split.
-6. **Release hygiene.** Version mismatch (`0.0.1-SNAPSHOT` vs docs `0.1.0`), stale status documents (`TESTING.md`, `ALL_ISSUES_SUMMARY.md`, `CEO_REVIEW.md`, `orchestrator-server/TODO.md`), license inconsistency.
+6. **Release hygiene.** Version mismatch (`0.0.1-SNAPSHOT` vs docs `0.1.0`), stale status documents (`TESTING.md`, `ALL_ISSUES_SUMMARY.md`, `CEO_REVIEW.md`, `orchestrator-server/TODO.md`). The license inconsistency is resolved (Apache-2.0 across the tree).
 7. **Credential rotation.** Rotate the OpenRouter key that appeared in `orchestrator-server/.idea/workspace.xml`. The value has been scrubbed from the working tree and is not in git history, but the exposed credential must still be revoked and reissued at the provider. A repository-wide scan now finds no `sk-or-v1-...` key.
 
 ## 5. Re-running the audit

@@ -6,6 +6,7 @@ import com.example.orchestrator.cli.config.CliConfig;
 import com.example.orchestrator.cli.config.ConfigManager;
 import com.example.orchestrator.cli.output.OutputFormatter;
 import com.example.orchestrator.cli.util.Ansi;
+import com.example.orchestrator.cli.util.TerminalSupport;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -59,7 +60,8 @@ public class VerifyCommand implements Callable<Integer> {
         OrchestratorClient client = new OrchestratorClient(config);
         OutputFormatter formatter = new OutputFormatter(outputFormat);
 
-        System.out.println(Ansi.bold(Ansi.CYAN + "🔍 Verifying project: ") + projectPath.getFileName());
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.ARROW + " Verifying project: ")
+            + projectPath.getFileName());
         System.out.println(Ansi.dim("Path: " + projectPath.toAbsolutePath()));
         System.out.println();
 
@@ -132,7 +134,7 @@ public class VerifyCommand implements Callable<Integer> {
 
     private void displayResults(OrchestratorClient client, OrchestratorClient.TaskResponse task, OutputFormatter formatter) {
         System.out.println();
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ VERIFICATION RESULTS ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading("VERIFICATION RESULTS")));
         System.out.println();
 
         if ("COMPLETED".equals(task.status())) {

@@ -6,14 +6,6 @@ package com.example.orchestrator.cli.util;
  */
 public class Spinner {
 
-    private static final String[] BRAILLE_FRAMES = {
-        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
-    };
-
-    private static final String[] ASCII_FRAMES = {
-        "|", "/", "-", "\\"
-    };
-
     private final String[] frames;
     private volatile String message;
     private Thread spinnerThread;
@@ -25,7 +17,7 @@ public class Spinner {
     }
 
     public Spinner(String message, boolean useBraille) {
-        this.frames = useBraille && supportsUnicode() ? BRAILLE_FRAMES : ASCII_FRAMES;
+        this.frames = TerminalSupport.spinnerFrames(useBraille);
         this.message = message;
     }
 
@@ -68,7 +60,9 @@ public class Spinner {
             } catch (InterruptedException ignored) {}
         }
 
-        String icon = success ? Ansi.GREEN + "✓" + Ansi.RESET : Ansi.RED + "✗" + Ansi.RESET;
+        String icon = success
+            ? Ansi.GREEN + TerminalSupport.CHECK + Ansi.RESET
+            : Ansi.RED + TerminalSupport.CROSS + Ansi.RESET;
         String elapsed = formatElapsed(System.currentTimeMillis() - startTime);
         System.out.print("\r" + icon + " " + finalMessage + " " + Ansi.DIM + elapsed + Ansi.RESET + "\n");
     }
@@ -86,10 +80,5 @@ public class Spinner {
         if (seconds < 60) return seconds + "s";
         long minutes = seconds / 60;
         return minutes + "m " + (seconds % 60) + "s";
-    }
-
-    private boolean supportsUnicode() {
-        String encoding = System.getProperty("sun.jnu.encoding", "UTF-8");
-        return encoding.contains("UTF") || System.console() != null;
     }
 }

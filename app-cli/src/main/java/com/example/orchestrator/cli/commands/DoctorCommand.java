@@ -6,6 +6,7 @@ import com.example.orchestrator.cli.config.CliConfig;
 import com.example.orchestrator.cli.config.ConfigManager;
 import com.example.orchestrator.cli.output.OutputFormatter;
 import com.example.orchestrator.cli.util.Ansi;
+import com.example.orchestrator.cli.util.TerminalSupport;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
@@ -56,7 +57,7 @@ public class DoctorCommand implements Callable<Integer> {
         CliConfig config = new ConfigManager().load();
         OutputFormatter formatter = new OutputFormatter(outputFormat);
 
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ DOCTOR - Prerequisite Checks ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading("DOCTOR - Prerequisite Checks")));
         System.out.println();
 
         DoctorResults results = new DoctorResults();
@@ -355,14 +356,16 @@ public class DoctorCommand implements Callable<Integer> {
 
     private void displayResults(DoctorResults results, OutputFormatter formatter) {
         System.out.println();
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ RESULTS ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading("RESULTS")));
         System.out.println();
 
         java.util.List<String> headers = java.util.List.of("Check", "Status", "Details", "Remediation");
         java.util.List<java.util.List<String>> rows = new java.util.ArrayList<>();
 
         for (DoctorResults.Check check : results.checks) {
-            String status = check.passed ? Ansi.success("✓ PASS") : Ansi.error("✗ FAIL");
+            String status = check.passed
+                ? Ansi.success(TerminalSupport.CHECK + " PASS")
+                : Ansi.error(TerminalSupport.CROSS + " FAIL");
             rows.add(java.util.List.of(
                 check.name,
                 status,
@@ -378,9 +381,11 @@ public class DoctorCommand implements Callable<Integer> {
 
         System.out.println();
         if (results.hasFailures()) {
-            System.out.println(Ansi.error("✗ Some checks failed. Please address the issues above."));
+            System.out.println(Ansi.error(TerminalSupport.CROSS
+                + " Some checks failed. Please address the issues above."));
         } else {
-            System.out.println(Ansi.success("✓ All checks passed! You're ready to use the orchestrator."));
+            System.out.println(Ansi.success(TerminalSupport.CHECK
+                + " All checks passed! You're ready to use the orchestrator."));
         }
     }
 

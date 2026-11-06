@@ -3,6 +3,7 @@ package com.example.orchestrator.cli.interactive;
 import com.example.orchestrator.cli.client.OrchestratorClient;
 import com.example.orchestrator.cli.util.Ansi;
 import com.example.orchestrator.cli.util.TablePrinter;
+import com.example.orchestrator.cli.util.TerminalSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.core.StreamReadConstraints;
@@ -59,7 +60,7 @@ public class PlanReviewer {
         }
         
         System.out.println();
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ PLAN REVIEW ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading("PLAN REVIEW")));
         System.out.println();
 
         // Task summary

@@ -423,3 +423,15 @@ the following are true:
 | SEC-11 | Detection/sanitization normalization drift | `PromptSanitizer` uses one NFC normalization and one shared match set for `sanitize()` and `hasInjection()`; both honor the same allow-list. | None. |
 | SEC-12 | Unbounded egress DNS resolution | `EgressDnsResolver` bounds lookups (2 s default), caches positive/negative results, and fails closed on timeout; configuration is available through system properties or environment variables. | Tune the timeout and cache TTL for the deployment's DNS environment. |
 | SEC-13 | Missing supply-chain controls | CI generates a CycloneDX aggregate SBOM and runs OWASP dependency-check; the release workflow signs the jar, SBOM, checksums, and installer with GPG, verifies signatures, and attests build provenance. | Configure `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE`; optionally `NVD_API_KEY`. Maven Central publication remains out of scope until production coordinates and repository credentials exist. |
+
+---
+
+## Appendix E — Security Hardening (SEC-14 to SEC-18)
+
+| ID | Issue | Remediation | Remaining external action |
+|---|---|---|---|
+| SEC-14 | `CertificatePinningManager.generatePinForHost` always threw `UnsupportedOperationException`. | Dead method and its unused imports removed; the working TLS pin generator remains. | None. |
+| SEC-15 | Windows CMD showed `?` instead of box-drawing and status glyphs. | `TerminalSupport` tests the actual stdout charset and falls back to ASCII for headings, tables, spinners, and status markers. `COMPANION_ASCII=1|true|yes` forces ASCII. | None. |
+| SEC-16 | No tracked `LICENSE`; README said MIT while distribution manifests said Apache-2.0. | Apache-2.0 `LICENSE` added; README, root POM, server POM, docs `package.json`, and lockfile aligned on Apache-2.0. | None. |
+| SEC-17 | Outbound HTTP client had no explicit TLS configuration or private-CA support. | `HttpClientConfig` uses an explicit `SSLContext` over the JVM default CAs and can add a PKCS12/JKS trust store through `orchestrator.http.tls.trust-store*` (`ORCHESTRATOR_HTTP_TLS_TRUST_STORE*`). The store is additive; hostname verification stays enabled and there is no trust-all mode. | Deployments using a private CA must provide the trust store and password; a missing or unreadable store fails startup. |
+| SEC-18 | Database-URL secret detection missed several schemes and query-parameter passwords. | Patterns now cover `jdbc:` plus PostgreSQL, MongoDB/SRV, MySQL, MariaDB, Redis/rediss, SQL Server, Oracle, SQLite, DB2, H2, ClickHouse, Snowflake, Redshift, Trino, Presto, and Neo4j URLs, plus `password=`/`pwd=` query parameters. | None. |

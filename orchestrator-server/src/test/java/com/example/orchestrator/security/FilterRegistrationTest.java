@@ -18,7 +18,7 @@ class FilterRegistrationTest {
 
     @Test
     void auditFilterUsesValidServletUrlPatterns() {
-        var registration = new AuditConfig().auditFilter();
+        var registration = new AuditConfig().auditFilter(false);
 
         assertThat(registration.getUrlPatterns())
             .containsExactlyInAnyOrder("/api/*", "/actuator/*");

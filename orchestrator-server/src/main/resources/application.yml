@@ -65,6 +65,13 @@ spring:
       max-regex-time-ms: 200
       max-input-chars: 100000
       max-line-length: 10000
+  # Outbound TLS for provider and GitHub API calls. The configured trust
+  # store is additive; JVM default CAs remain trusted. There is no trust-all.
+  http:
+    tls:
+      trust-store: ${ORCHESTRATOR_HTTP_TLS_TRUST_STORE:}
+      trust-store-password: ${ORCHESTRATOR_HTTP_TLS_TRUST_STORE_PASSWORD:}
+      trust-store-type: ${ORCHESTRATOR_HTTP_TLS_TRUST_STORE_TYPE:PKCS12}
   # OpenTelemetry Distributed Tracing (H-15)
   otel:
     enabled: false

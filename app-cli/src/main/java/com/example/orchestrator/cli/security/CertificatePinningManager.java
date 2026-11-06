@@ -4,11 +4,7 @@ import jakarta.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLException;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,7 +12,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.HashMap;
@@ -235,19 +230,6 @@ public class CertificatePinningManager {
             }
         }
         return sb.toString();
-    }
-
-    /**
-     * Generate pin for a server by connecting to it.
-     * Useful for initial pin generation (TOFU - Trust On First Use).
-     */
-    public static String generatePinForHost(String hostname, int port) throws IOException, CertificateException, NoSuchAlgorithmException {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(hostname, port), 10000);
-            // For TLS, we'd need to use SSLSocket
-            // This is a simplified version - in practice use SSLSocketFactory
-            throw new UnsupportedOperationException("Use SSLSocket for TLS connections");
-        }
     }
 
     /**

@@ -60,12 +60,12 @@ public class Ansi {
     public static final String HOME = "\u001B[H";
 
     // Common combinations
-    public static final String SUCCESS = GREEN + "✓" + RESET;
-    public static final String ERROR = RED + "✗" + RESET;
-    public static final String WARNING = YELLOW + "⚠" + RESET;
-    public static final String INFO = BLUE + "ℹ" + RESET;
-    public static final String ARROW = CYAN + "▸" + RESET;
-    public static final String BULLET = DIM + "•" + RESET;
+    public static final String SUCCESS = GREEN + TerminalSupport.CHECK + RESET;
+    public static final String ERROR = RED + TerminalSupport.CROSS + RESET;
+    public static final String WARNING = YELLOW + TerminalSupport.WARNING + RESET;
+    public static final String INFO = BLUE + TerminalSupport.INFO + RESET;
+    public static final String ARROW = CYAN + TerminalSupport.ARROW + RESET;
+    public static final String BULLET = DIM + TerminalSupport.BULLET + RESET;
 
     /**
      * Enable or disable ANSI output globally.

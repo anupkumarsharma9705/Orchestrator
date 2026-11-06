@@ -2,7 +2,6 @@ package com.example.orchestrator.cli.util;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * ASCII table printer for CLI output.
@@ -64,7 +63,7 @@ public class TablePrinter {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < widths.length; i++) {
             String cell = i < cells.size() ? cells.get(i) : "";
-            sb.append(" ").append(padRight(cell, widths[i])).append(" │");
+            sb.append(" ").append(padRight(cell, widths[i])).append(" ").append(TerminalSupport.BOX_VERTICAL);
         }
         String row = sb.toString();
         if (isHeader) {
@@ -77,7 +76,8 @@ public class TablePrinter {
     private static void printSeparator(int[] widths) {
         StringBuilder sb = new StringBuilder();
         for (int w : widths) {
-            sb.append(" ").append("─".repeat(w)).append(" ┼");
+            sb.append(" ").append(TerminalSupport.BOX_HORIZONTAL.repeat(w))
+              .append(" ").append(TerminalSupport.BOX_CROSS);
         }
         System.out.println(Ansi.dim(sb.toString()));
     }

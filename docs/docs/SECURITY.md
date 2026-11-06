@@ -63,7 +63,20 @@ available.
 - **Audit log**: JSON lines in `orchestrator-audit.log`. The audit filter uses
   servlet-valid prefix patterns (`/api/*`, `/actuator/*`) and the mTLS filter
   uses `/api/*`, so API and actuator requests are actually recorded and
-  `X-Client-Cert-DN` reaches downstream handlers.
+  `X-Client-Cert-DN` reaches downstream handlers. Audit records use the same
+  `ClientIpResolver` as rate limiting, so the trusted-proxy rules above apply
+  consistently and the logged IP is never taken from the client-controlled
+  left-most `X-Forwarded-For` hop.
+- **Outbound TLS**: provider and GitHub API calls use the JVM default trust
+  store and normal hostname verification. An additional PKCS12/JKS trust store
+  can be supplied with `orchestrator.http.tls.trust-store`,
+  `orchestrator.http.tls.trust-store-password`, and
+  `orchestrator.http.tls.trust-store-type` (or the
+  `ORCHESTRATOR_HTTP_TLS_TRUST_STORE*` environment variables). It is **additive**:
+  public CAs remain trusted, and there is no trust-all mode. A missing or
+  unreadable configured store fails startup rather than silently falling back.
+- **Licensing**: the project is licensed under Apache-2.0; see the tracked
+  `LICENSE` file.
 - **Input validation**: Jakarta Bean Validation and request size limits.
 - **Prompt sanitization**: injection detection and removal share one NFC
   normalization and one match set, so `hasInjection()` and `sanitize()` cannot
@@ -75,6 +88,14 @@ available.
 - **Workspace confinement**: a project's `rootPath` must be an absolute,
   canonical directory below `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS`. API
   responses report workspace-relative paths instead of host paths.
+
+### CLI
+
+- **Terminal compatibility**: the CLI checks whether the active stdout charset
+  can encode its box-drawing and status glyphs and falls back to ASCII when it
+  cannot. Set `COMPANION_ASCII=1` (or `true`/`yes`) to force ASCII output on any
+  terminal. This prevents Windows CMD code pages from rendering `?` in doctor,
+  table, and progress output.
 
 ### Generated projects
 

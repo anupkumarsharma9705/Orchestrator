@@ -17,6 +17,17 @@ public class SecretScanner {
 
     private static final Logger log = LoggerFactory.getLogger(SecretScanner.class);
 
+    /**
+     * Database URL schemes that commonly carry credentials in the user-info
+     * section. The optional {@code jdbc:} prefix covers JDBC URLs such as
+     * {@code jdbc:postgresql://user:pass@host/db}; the remaining alternatives
+     * cover native driver URLs such as {@code postgresql://},
+     * {@code mongodb+srv://} and {@code sqlserver://}.
+     */
+    private static final String DATABASE_SCHEME =
+        "(?:jdbc:)?(?:postgres(?:ql)?|mongodb(?:\\+srv)?|mysql|mariadb|redis|rediss|"
+            + "sqlserver|oracle|sqlite|db2|h2|clickhouse|snowflake|redshift|trino|presto|neo4j)";
+
     // Secret patterns with names for reporting
     private static final List<SecretPattern> SECRET_PATTERNS = List.of(
         new SecretPattern("AWS Access Key", Pattern.compile("AKIA[0-9A-Z]{16}")),
@@ -41,9 +52,13 @@ public class SecretScanner {
         new SecretPattern("Access Token (Generic)", Pattern.compile("(?i)access[_-]?token[\\s\"':=]+[A-Za-z0-9_-]{20,}")),
         new SecretPattern("Private Key (PEM)", Pattern.compile("-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----")),
         new SecretPattern("SSH Private Key", Pattern.compile("-----BEGIN OPENSSH PRIVATE KEY-----")),
-        new SecretPattern("Database URL with Password", Pattern.compile("(?i)(jdbc|mongodb|postgres|mysql|redis)://[^:]+:[^@]+@")),
+        new SecretPattern("Database URL with Password",
+            Pattern.compile("(?i)\\b" + DATABASE_SCHEME + "://[^:@/\\s]*:[^@/\\s]+@")),
+        new SecretPattern("Database URL with Password in Query",
+            Pattern.compile("(?i)\\b" + DATABASE_SCHEME + "://[^\\s\"']*[?&](?:password|pwd)=[^&\\s\"']+")),
         // Database URL without password (for tracking)
-        new SecretPattern("Database URL (no password)", Pattern.compile("(?i)(jdbc|mongodb|postgres|mysql|redis)://[^:@/]+@")),
+        new SecretPattern("Database URL (no password)",
+            Pattern.compile("(?i)\\b" + DATABASE_SCHEME + "://[^:@/\\s]+@")),
         new SecretPattern("Connection String", Pattern.compile("(?i)(connectionstring|connection_string)[\\s\"':=]+[^\\s;]{20,}")),
         new SecretPattern("Auth Token", Pattern.compile("(?i)auth[_-]?token[\\s\"':=]+[A-Za-z0-9_-]{20,}")),
         new SecretPattern("Session ID", Pattern.compile("(?i)session[_-]?id[\\s\"':=]+[A-Za-z0-9_-]{20,}")),

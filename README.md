@@ -189,10 +189,12 @@ disabled by the CLI.
 - **No shared dev credentials** - the server has no fallback API key and the CLI has no fallback trust-all mode
 - **Generated PKI** - `scripts/dev-up` creates a development CA with separate server and client certificates
 - **Sandboxed engine verification** - `engine-verify` runs builds in Docker containers with no network, limited CPU/memory, and a read-only rootfs when a daemon is available
-- **Server tools are host-executed** - `runMavenBuild`, `runMavenTest`, and the scanner tools run directly on the server host; the compose stack has no Docker socket, so sandboxing is degraded there
+- **Sandboxed server tools** - Maven, test, Git, scanner, Dependency-Check, and Docker tools run through the Docker sandbox; if the daemon is unreachable the operation fails closed instead of running on the host. The development compose stack mounts the Docker socket, which is root-equivalent and is not a production boundary.
+- **Outbound TLS** - provider and GitHub API calls use the JVM default trust store and hostname verification. A private CA can be added with `orchestrator.http.tls.trust-store*` / `ORCHESTRATOR_HTTP_TLS_TRUST_STORE*`; the additional store is additive and there is no trust-all mode.
 - **Path validation** - prevents path traversal attacks
 - **Secret scanning** - detects and redacts secrets in generated code
 - **Prompt injection defense** - sanitizes all LLM inputs
+- **Terminal compatibility** - the CLI detects when the console cannot encode its Unicode glyphs and falls back to ASCII; `COMPANION_ASCII=1` forces ASCII output (for example in legacy Windows CMD).
 
 ## Architecture
 
@@ -257,4 +259,4 @@ mvn -pl orchestrator-server spring-boot:run
 
 ## License
 
-MIT License - see LICENSE file for details.
+Apache License 2.0 - see [LICENSE](LICENSE) for details.

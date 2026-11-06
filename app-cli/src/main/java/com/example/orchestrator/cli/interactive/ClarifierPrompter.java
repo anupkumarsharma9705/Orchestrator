@@ -2,6 +2,7 @@ package com.example.orchestrator.cli.interactive;
 
 import com.example.orchestrator.cli.util.Ansi;
 import com.example.orchestrator.cli.util.TablePrinter;
+import com.example.orchestrator.cli.util.TerminalSupport;
 
 import java.util.List;
 import java.util.Map;
@@ -114,7 +115,7 @@ public class ClarifierPrompter {
      */
     public void section(String title) {
         System.out.println();
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ " + title + " ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading(title)));
         System.out.println();
     }
 
@@ -175,7 +176,7 @@ public class ClarifierPrompter {
     private void printNumberedOptions(List<String> options, List<String> defaults) {
         AtomicInteger i = new AtomicInteger(1);
         options.forEach(opt -> {
-            String marker = defaults.contains(opt) ? Ansi.green(" ✓") : "";
+            String marker = defaults.contains(opt) ? Ansi.green(" " + TerminalSupport.CHECK) : "";
             System.out.println("  " + Ansi.dim(i.getAndIncrement() + ")") + " " + opt + marker);
         });
     }

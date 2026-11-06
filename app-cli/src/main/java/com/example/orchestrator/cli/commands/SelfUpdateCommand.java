@@ -5,6 +5,7 @@ import com.example.orchestrator.cli.config.CliConfig;
 import com.example.orchestrator.cli.config.ConfigManager;
 import com.example.orchestrator.cli.output.OutputFormatter;
 import com.example.orchestrator.cli.util.Ansi;
+import com.example.orchestrator.cli.util.TerminalSupport;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
@@ -130,7 +131,8 @@ public class SelfUpdateCommand implements Callable<Integer> {
         }
 
         if (comparison < 0) {
-            System.out.println(Ansi.warning(" Update available: " + currentVersion + " → " + latestVersion));
+            System.out.println(Ansi.warning(" Update available: " + currentVersion
+                + " " + TerminalSupport.ARROW + " " + latestVersion));
         } else if (force) {
             System.out.println(Ansi.warning(" Forcing reinstall of version " + latestVersion));
         }
@@ -556,7 +558,8 @@ public class SelfUpdateCommand implements Callable<Integer> {
                 Files.deleteIfExists(newJar.getParent());
 
                 System.out.println();
-                System.out.println(Ansi.success(" ✓ Successfully updated to latest version!"));
+                System.out.println(Ansi.success(" " + TerminalSupport.CHECK
+                    + " Successfully updated to latest version!"));
                 System.out.println(Ansi.dim(" Run 'companion --version' to confirm"));
 
                 return 0;

@@ -10,6 +10,7 @@ import com.example.orchestrator.cli.interactive.ProgressRenderer;
 import com.example.orchestrator.cli.offline.OfflineModeService;
 import com.example.orchestrator.cli.output.OutputFormatter;
 import com.example.orchestrator.cli.util.Ansi;
+import com.example.orchestrator.cli.util.TerminalSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.core.StreamReadConstraints;
@@ -121,7 +122,7 @@ public class GenerateCommand implements Callable<Integer> {
         PlanReviewer planReviewer = new PlanReviewer(nonInteractive);
         ProgressRenderer progress = new ProgressRenderer();
 
-        System.out.println(Ansi.bold(Ansi.CYAN + "🚀 Generating project: " + name));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.ARROW + " Generating project: " + name));
         System.out.println(Ansi.dim("Description: " + resolvedDescription));
         System.out.println(Ansi.dim("Project root: " + root.toAbsolutePath()));
         if (offline) {
@@ -203,7 +204,7 @@ public class GenerateCommand implements Callable<Integer> {
 
         if (result.success()) {
             System.out.println();
-            System.out.println(Ansi.success(" ✓ " + result.message()));
+            System.out.println(Ansi.success(" " + TerminalSupport.CHECK + " " + result.message()));
             System.out.println();
             System.out.println(Ansi.bold(dryRun ? "Files that would be generated:" : "Generated files:"));
             for (String file : result.files()) {
@@ -221,7 +222,8 @@ public class GenerateCommand implements Callable<Integer> {
                 System.out.println(Ansi.warning(" DRY RUN: No files were created. Run without --dry-run to generate."));
             } else {
                 System.out.println();
-                System.out.println(Ansi.success(" ✓ Project generated at: " + result.projectPath()));
+                System.out.println(Ansi.success(" " + TerminalSupport.CHECK + " Project generated at: "
+                    + result.projectPath()));
             }
             return 0;
         } else {
@@ -386,7 +388,7 @@ public class GenerateCommand implements Callable<Integer> {
 
     private void displayResults(OrchestratorClient client, OrchestratorClient.TaskResponse task, OutputFormatter formatter) {
         System.out.println();
-        System.out.println(Ansi.bold(Ansi.CYAN + "═══ GENERATION COMPLETE ═══"));
+        System.out.println(Ansi.bold(Ansi.CYAN + TerminalSupport.heading("GENERATION COMPLETE")));
         System.out.println();
 
         if ("COMPLETED".equals(task.status())) {

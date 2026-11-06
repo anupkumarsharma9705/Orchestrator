@@ -2,6 +2,7 @@ package com.example.orchestrator.cli.output;
 
 import com.example.orchestrator.cli.util.Ansi;
 import com.example.orchestrator.cli.util.TablePrinter;
+import com.example.orchestrator.cli.util.TerminalSupport;
 
 import java.util.List;
 import java.util.Map;
@@ -57,17 +58,19 @@ public class OutputFormatter {
 
         sb.append(" ");
         for (int i = 0; i < widths.length; i++) {
-            sb.append(" ").append(padRight(headers.get(i), widths[i])).append(" \u2502");
+            sb.append(" ").append(padRight(headers.get(i), widths[i])).append(" ").append(TerminalSupport.BOX_VERTICAL);
         }
         sb.append("\n");
 
-        for (int w : widths) sb.append(" ").append("\u2500".repeat(w)).append(" \u253c");
+        for (int w : widths) sb.append(" ").append(TerminalSupport.BOX_HORIZONTAL.repeat(w))
+            .append(" ").append(TerminalSupport.BOX_CROSS);
         sb.append("\n");
 
         for (List<String> row : rows) {
             sb.append(" ");
             for (int i = 0; i < widths.length; i++) {
-                sb.append(" ").append(padRight(i < row.size() ? row.get(i) : "", widths[i])).append(" \u2502");
+                sb.append(" ").append(padRight(i < row.size() ? row.get(i) : "", widths[i]))
+                    .append(" ").append(TerminalSupport.BOX_VERTICAL);
             }
             sb.append("\n");
         }

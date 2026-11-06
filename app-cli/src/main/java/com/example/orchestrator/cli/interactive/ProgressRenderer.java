@@ -4,6 +4,7 @@ import com.example.orchestrator.cli.client.OrchestratorClient;
 import com.example.orchestrator.cli.util.Ansi;
 import com.example.orchestrator.cli.util.Spinner;
 import com.example.orchestrator.cli.util.TablePrinter;
+import com.example.orchestrator.cli.util.TerminalSupport;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -132,10 +133,10 @@ public class ProgressRenderer {
 
     private String formatStatus(String status) {
         return switch (status) {
-            case "COMPLETED" -> Ansi.success("✓ DONE");
-            case "FAILED" -> Ansi.error("✗ FAIL");
-            case "RUNNING" -> Ansi.info("⟳ RUN");
-            case "PENDING" -> Ansi.dim("○ WAIT");
+            case "COMPLETED" -> Ansi.success(TerminalSupport.CHECK + " DONE");
+            case "FAILED" -> Ansi.error(TerminalSupport.CROSS + " FAIL");
+            case "RUNNING" -> Ansi.info(TerminalSupport.RUNNING + " RUN");
+            case "PENDING" -> Ansi.dim(TerminalSupport.PENDING + " WAIT");
             default -> status;
         };
     }

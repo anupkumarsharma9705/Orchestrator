@@ -1,5 +1,6 @@
 package com.example.orchestrator.audit;
 
+import com.example.orchestrator.security.ClientIpResolver;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
@@ -8,23 +9,17 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import jakarta.servlet.Filter;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Structured audit logging configuration.
@@ -55,9 +50,10 @@ public class AuditConfig {
     public void setMaxBodyLength(int maxBodyLength) { this.maxBodyLength = maxBodyLength; }
 
     @Bean
-    public FilterRegistrationBean<AuditFilter> auditFilter() {
+    public FilterRegistrationBean<AuditFilter> auditFilter(
+            @Value("${orchestrator.security.trust-forwarded-headers:false}") boolean trustForwardedHeaders) {
         FilterRegistrationBean<AuditFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new AuditFilter(this));
+        registration.setFilter(new AuditFilter(this, new ClientIpResolver(trustForwardedHeaders)));
         // Servlet spec path mappings end with a single '*'. "/api/**" is not
         // a valid mapping and silently matches nothing.
         registration.addUrlPatterns("/api/*", "/actuator/*");
@@ -72,11 +68,13 @@ public class AuditConfig {
     public static class AuditFilter extends OncePerRequestFilter {
 
         private final AuditConfig config;
+        private final ClientIpResolver clientIpResolver;
         private final ObjectMapper objectMapper = new ObjectMapper();
         private static final Logger log = LoggerFactory.getLogger(AuditFilter.class);
 
-        public AuditFilter(AuditConfig config) {
+        public AuditFilter(AuditConfig config, ClientIpResolver clientIpResolver) {
             this.config = config;
+            this.clientIpResolver = clientIpResolver;
             this.objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         }
 
@@ -111,7 +109,7 @@ public class AuditConfig {
             auditEvent.setMethod(request.getMethod());
             auditEvent.setPath(request.getRequestURI());
             auditEvent.setQueryString(request.getQueryString());
-            auditEvent.setClientIp(getClientIp(request));
+            auditEvent.setClientIp(clientIpResolver.resolve(request));
             auditEvent.setUserAgent(request.getHeader("User-Agent"));
             auditEvent.setAuthType(getAuthType(request));
 
@@ -154,18 +152,6 @@ public class AuditConfig {
                 // Clear MDC
                 org.slf4j.MDC.remove("correlationId");
             }
-        }
-
-        private String getClientIp(HttpServletRequest request) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                return xff.split(",")[0].trim();
-            }
-            String xri = request.getHeader("X-Real-IP");
-            if (xri != null && !xri.isBlank()) {
-                return xri;
-            }
-            return request.getRemoteAddr();
         }
 
         private String getAuthType(HttpServletRequest request) {
