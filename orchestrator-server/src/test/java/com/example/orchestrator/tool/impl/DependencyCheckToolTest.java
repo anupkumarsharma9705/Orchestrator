@@ -2,6 +2,7 @@ package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.SharedTestConfig;
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.ToolRegistry;
 import com.example.orchestrator.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,7 +50,7 @@ class DependencyCheckToolTest {
             """);
 
         ObjectMapper mapper = new ObjectMapper();
-        DependencyCheckTool tool = new DependencyCheckTool(mapper);
+        DependencyCheckTool tool = new DependencyCheckTool(mapper, org.mockito.Mockito.mock(SandboxService.class));
 
         Project project = new Project(
             "test", "Test", tempDir.resolve("test-project"),

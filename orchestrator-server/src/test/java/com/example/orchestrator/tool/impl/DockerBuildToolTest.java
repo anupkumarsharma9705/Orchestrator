@@ -2,6 +2,7 @@ package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.SharedTestConfig;
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.ToolRegistry;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
@@ -31,7 +32,7 @@ class DockerBuildToolTest {
     @Test
     void shouldCreateDockerBuildTool() {
         ObjectMapper mapper = new ObjectMapper();
-        DockerBuildTool tool = new DockerBuildTool(mapper);
+        DockerBuildTool tool = new DockerBuildTool(mapper, org.mockito.Mockito.mock(SandboxService.class));
 
         ToolSpec spec = tool.getSpec();
         assertEquals("dockerBuild", spec.name());

@@ -5,10 +5,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -23,48 +26,101 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
  * Spring Security configuration for the Orchestrator Server.
- * Enforces API key authentication on all endpoints with rate limiting.
+ *
+ * <p>Every route is authenticated except a small explicit public set. The
+ * bootstrap key can act as USER, APPROVER and ADMIN; additional keys may carry
+ * a narrower role set. Method security is enabled so {@code @PreAuthorize} is
+ * actually enforced.</p>
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
-    private final String apiKey;
-    private final boolean isProduction;
+    private final List<ApiKeyCredential> credentials;
+    private final boolean trustForwardedHeaders;
 
     // Rate limiting: max 10 failed attempts per minute per IP
     private static final int MAX_FAILED_ATTEMPTS = 10;
     private static final long RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-    
+    private static final int MAX_CLIENT_IP_LENGTH = 64;
+
     // Track failed attempts per IP
     private final ConcurrentMap<String, FailedAttemptTracker> failedAttempts = new ConcurrentHashMap<>();
 
     public SecurityConfig(
-            @Value("${orchestrator.api-key:}") String apiKey,
-            @Value("${spring.profiles.active:dev}") String activeProfile) {
-        this.apiKey = ApiKeyRequirements.requireConfigured(apiKey);
-        this.isProduction = "prod".equals(activeProfile) || "production".equals(activeProfile);
+            @Value("${orchestrator.api-key:}") String bootstrapApiKey,
+            SecurityProperties properties) {
+        this.trustForwardedHeaders = properties.isTrustForwardedHeaders();
+        this.credentials = buildCredentials(bootstrapApiKey, properties);
+    }
+
+    private static List<ApiKeyCredential> buildCredentials(String bootstrapApiKey,
+                                                           SecurityProperties properties) {
+        String validatedBootstrapKey = ApiKeyRequirements.requireConfigured(bootstrapApiKey);
+        List<ApiKeyCredential> result = new ArrayList<>();
+        result.add(credential(validatedBootstrapKey, "api",
+            List.of("USER", "APPROVER", "ADMIN")));
+
+        Set<String> seenKeys = new LinkedHashSet<>();
+        seenKeys.add(validatedBootstrapKey);
+        for (SecurityProperties.ApiKey configured : properties.getApiKeys()) {
+            if (configured == null || configured.getKey() == null || configured.getKey().isBlank()) {
+                continue;
+            }
+            String validatedKey = ApiKeyRequirements.requireConfigured(configured.getKey());
+            if (!seenKeys.add(validatedKey)) {
+                continue;
+            }
+            String subject = configured.getSubject() == null || configured.getSubject().isBlank()
+                ? "api" : configured.getSubject().trim();
+            result.add(credential(validatedKey, subject, configured.getRoles()));
+        }
+        return List.copyOf(result);
+    }
+
+    private static ApiKeyCredential credential(String key, String subject, List<String> roles) {
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        if (roles != null) {
+            for (String role : roles) {
+                if (role == null || role.isBlank()) {
+                    continue;
+                }
+                String normalised = role.trim().toUpperCase(Locale.ROOT);
+                if (!normalised.startsWith("ROLE_")) {
+                    normalised = "ROLE_" + normalised;
+                }
+                authorities.add(new SimpleGrantedAuthority(normalised));
+            }
+        }
+        return new ApiKeyCredential(
+            key.getBytes(StandardCharsets.UTF_8),
+            subject,
+            List.copyOf(authorities));
     }
 
     @Bean
     @Order(1)
-    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {        http
+    public SecurityFilterChain apiSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
             .securityMatcher("/api/**")
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.GET, "/api/version").permitAll()
-                .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
-                .requestMatchers(HttpMethod.GET, "/actuator/info").permitAll()
                 .anyRequest().authenticated()
             )
-            .addFilterBefore(new ApiKeyAuthenticationFilter(apiKey, failedAttempts), UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(apiKeyFilter(), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -77,24 +133,66 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/info").permitAll()
+                .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**",
+                    "/actuator/info", "/actuator/info/**").permitAll()
                 .anyRequest().authenticated()
             )
-            .addFilterBefore(new ApiKeyAuthenticationFilter(apiKey, failedAttempts), UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(apiKeyFilter(), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
     /**
-     * Filter to validate API key from Authorization header or custom header with rate limiting.
+     * Catch-all chain. Without this, any controller mapped outside /api and
+     * /actuator would be reachable without authentication.
+     */
+    @Bean
+    @Order(3)
+    public SecurityFilterChain fallbackSecurityFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/**")
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.GET, "/api/version", "/actuator/health",
+                    "/actuator/health/**", "/actuator/info", "/actuator/info/**").permitAll()
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(apiKeyFilter(), UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    private ApiKeyAuthenticationFilter apiKeyFilter() {
+        return new ApiKeyAuthenticationFilter(credentials, trustForwardedHeaders, failedAttempts);
+    }
+
+    private record ApiKeyCredential(
+        byte[] key,
+        String subject,
+        List<GrantedAuthority> authorities
+    ) {
+        @Override
+        public String toString() {
+            return "ApiKeyCredential[subject=" + subject + "]";
+        }
+    }
+
+    /**
+     * Filter to validate API keys from the Authorization or X-API-Key header
+     * with per-client rate limiting.
      */
     private static class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
-        private final byte[] configuredApiKey;
+        private final List<ApiKeyCredential> credentials;
+        private final boolean trustForwardedHeaders;
         private final ConcurrentMap<String, FailedAttemptTracker> failedAttempts;
 
-        public ApiKeyAuthenticationFilter(String apiKey, ConcurrentMap<String, FailedAttemptTracker> failedAttempts) {
-            this.configuredApiKey = apiKey.getBytes(StandardCharsets.UTF_8);
+        public ApiKeyAuthenticationFilter(List<ApiKeyCredential> credentials,
+                                          boolean trustForwardedHeaders,
+                                          ConcurrentMap<String, FailedAttemptTracker> failedAttempts) {
+            this.credentials = credentials;
+            this.trustForwardedHeaders = trustForwardedHeaders;
             this.failedAttempts = failedAttempts;
         }
 
@@ -103,7 +201,7 @@ public class SecurityConfig {
                 throws ServletException, IOException {
 
             String path = request.getRequestURI();
-            
+
             // Skip authentication for public endpoints
             if (isPublicEndpoint(path)) {
                 filterChain.doFilter(request, response);
@@ -111,7 +209,7 @@ public class SecurityConfig {
             }
 
             String clientIp = getClientIp(request);
-            
+
             // Check rate limiting before authentication
             if (isRateLimited(clientIp)) {
                 response.setStatus(429); // Too Many Requests
@@ -121,7 +219,7 @@ public class SecurityConfig {
             }
 
             String apiKey = extractApiKey(request);
-            
+
             if (apiKey == null || apiKey.isBlank()) {
                 recordFailedAttempt(clientIp);
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -130,7 +228,17 @@ public class SecurityConfig {
                 return;
             }
 
-            if (!MessageDigest.isEqual(configuredApiKey, apiKey.getBytes(StandardCharsets.UTF_8))) {
+            ApiKeyCredential matched = null;
+            byte[] presented = apiKey.getBytes(StandardCharsets.UTF_8);
+            // Compare against every credential so timing does not reveal which
+            // key (if any) matched early.
+            for (ApiKeyCredential credential : credentials) {
+                if (MessageDigest.isEqual(credential.key(), presented)) {
+                    matched = credential;
+                }
+            }
+
+            if (matched == null) {
                 recordFailedAttempt(clientIp);
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json");
@@ -141,39 +249,65 @@ public class SecurityConfig {
             // Successful authentication - clear failed attempts for this IP
             clearFailedAttempts(clientIp);
 
-            // Create authentication and set in security context
-            Authentication auth = new PreAuthenticatedAuthenticationToken(apiKey, apiKey, Collections.emptyList());
+            Authentication auth = new PreAuthenticatedAuthenticationToken(
+                matched.subject(), null, matched.authorities());
             SecurityContextHolder.getContext().setAuthentication(auth);
-            
+
             filterChain.doFilter(request, response);
         }
 
         private boolean isPublicEndpoint(String path) {
-            return path.equals("/api/version") 
-                || path.startsWith("/actuator/health")
-                || path.startsWith("/actuator/info");
+            return path.equals("/api/version")
+                || path.equals("/actuator/health")
+                || path.startsWith("/actuator/health/")
+                || path.equals("/actuator/info")
+                || path.startsWith("/actuator/info/");
         }
 
         private String getClientIp(HttpServletRequest request) {
-            String xForwardedFor = request.getHeader("X-Forwarded-For");
-            if (xForwardedFor != null && !xForwardedFor.isBlank()) {
-                return xForwardedFor.split(",")[0].trim();
+            String resolved = request.getRemoteAddr();
+            if (!trustForwardedHeaders) {
+                return normaliseClientIp(resolved);
             }
-            String xRealIp = request.getHeader("X-Real-IP");
-            if (xRealIp != null && !xRealIp.isBlank()) {
-                return xRealIp.trim();
+
+            // Forwarding headers are only honoured behind a trusted proxy.
+            // Take the right-most hop: that is the value appended by the proxy
+            // closest to this server. The left-most value is client-controlled.
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                String[] hops = forwardedFor.split(",");
+                for (int i = hops.length - 1; i >= 0; i--) {
+                    String hop = hops[i].trim();
+                    if (!hop.isEmpty()) {
+                        return normaliseClientIp(hop);
+                    }
+                }
             }
-            return request.getRemoteAddr();
+            String realIp = request.getHeader("X-Real-IP");
+            if (realIp != null && !realIp.isBlank()) {
+                return normaliseClientIp(realIp.trim());
+            }
+            return normaliseClientIp(resolved);
+        }
+
+        private String normaliseClientIp(String value) {
+            if (value == null || value.isBlank()) {
+                return "unknown";
+            }
+            String trimmed = value.trim();
+            return trimmed.length() > MAX_CLIENT_IP_LENGTH
+                ? trimmed.substring(0, MAX_CLIENT_IP_LENGTH)
+                : trimmed;
         }
 
         private boolean isRateLimited(String clientIp) {
             FailedAttemptTracker tracker = failedAttempts.get(clientIp);
             if (tracker == null) return false;
-            
+
             long now = Instant.now().toEpochMilli();
             // Clean old attempts
             tracker.cleanOldAttempts(now);
-            
+
             return tracker.getCount() >= MAX_FAILED_ATTEMPTS;
         }
 
@@ -192,13 +326,13 @@ public class SecurityConfig {
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
                 return authHeader.substring(7).trim();
             }
-            
+
             // Check X-API-Key header
             String apiKeyHeader = request.getHeader("X-API-Key");
             if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
                 return apiKeyHeader.trim();
             }
-            
+
             return null;
         }
     }
@@ -208,16 +342,16 @@ public class SecurityConfig {
      */
     private static class FailedAttemptTracker {
         private final ConcurrentMap<Long, Long> attempts = new ConcurrentHashMap<>();
-        
+
         void recordAttempt(long timestamp) {
             attempts.put(timestamp, timestamp);
         }
-        
+
         void cleanOldAttempts(long now) {
             long cutoff = now - RATE_LIMIT_WINDOW_MS;
             attempts.entrySet().removeIf(entry -> entry.getKey() < cutoff);
         }
-        
+
         int getCount() {
             return attempts.size();
         }

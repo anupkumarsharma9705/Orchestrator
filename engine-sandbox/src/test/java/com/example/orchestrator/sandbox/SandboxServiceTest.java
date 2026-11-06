@@ -134,7 +134,11 @@ class SandboxServiceTest {
     @Test
     void validateDockerHost_acceptsAllowedNamedPipe() {
         config = createValidTestConfig();
+        config.setAllowedDockerHosts(List.of(
+            "npipe:////./pipe/docker_engine",
+            "npipe:////./pipe/dockerDesktopLinuxEngine"));
         config.validateDockerHost("npipe:////./pipe/docker_engine");
+        config.validateDockerHost("npipe:////./pipe/dockerDesktopLinuxEngine");
     }
 
     @Test
@@ -191,17 +195,50 @@ class SandboxServiceTest {
     @Test
     void validateWorkspacePath_allowsValidPath(@TempDir Path tempDir) throws IOException {
         config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(tempDir.toString()));
         sandboxService = new SandboxService(config);
-        
-        // Create a subdirectory under the allowed base
-        Path allowedBase = Paths.get(System.getProperty("user.home"), ".orchestrator", "workspaces").toAbsolutePath().normalize();
-        Path testWorkspace = allowedBase.resolve("test-project");
+
+        Path testWorkspace = tempDir.resolve("test-project");
         Files.createDirectories(testWorkspace);
-        
+
         // Use reflection to test private method
         Path validated = invokeValidateWorkspacePath(testWorkspace);
         assertThat(validated).isNotNull();
-        assertThat(validated).isEqualTo(testWorkspace.toAbsolutePath().normalize());
+        assertThat(validated).isEqualTo(testWorkspace.toRealPath());
+    }
+
+    @Test
+    void validateWorkspacePath_rejectsPathOutsideConfiguredRoots(@TempDir Path tempDir) throws IOException {
+        Path allowedRoot = tempDir.resolve("allowed");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(allowedRoot);
+        Files.createDirectories(outside);
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(allowedRoot.toString()));
+        sandboxService = new SandboxService(config);
+
+        assertThat(invokeValidateWorkspacePath(outside)).isNull();
+    }
+
+    @Test
+    void validateWorkspacePath_rejectsSymlinkEscape(@TempDir Path tempDir) throws IOException {
+        Path allowedRoot = tempDir.resolve("allowed");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(allowedRoot);
+        Files.createDirectories(outside);
+        Path link = allowedRoot.resolve("escape");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException | IOException e) {
+            return; // Symlinks need privileges on Windows; nothing to assert.
+        }
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(allowedRoot.toString()));
+        sandboxService = new SandboxService(config);
+
+        assertThat(invokeValidateWorkspacePath(link)).isNull();
     }
 
     @Test
@@ -324,7 +361,50 @@ class SandboxServiceTest {
         assertThat(result.length()).isLessThanOrEqualTo(214);
     }
 
+    @Test
+    void validateArguments_acceptsPlainArgv() {
+        config = new SandboxConfig();
+        sandboxService = new SandboxService(config);
+
+        assertThat(invokeValidateArguments(List.of("mvn", "-B", "verify")))
+            .containsExactly("mvn", "-B", "verify");
+        assertThat(invokeValidateArguments(List.of("semgrep", "--config=auto", "--json", ".")))
+            .containsExactly("semgrep", "--config=auto", "--json", ".");
+    }
+
+    @Test
+    void validateArguments_rejectsPathExecutableAndEmptyLists() {
+        config = new SandboxConfig();
+        sandboxService = new SandboxService(config);
+
+        assertThat(invokeValidateArguments(null)).isNull();
+        assertThat(invokeValidateArguments(List.of())).isNull();
+        assertThat(invokeValidateArguments(List.of("../mvn", "clean"))).isNull();
+        assertThat(invokeValidateArguments(List.of("/bin/sh", "-c", "id"))).isNull();
+        assertThat(invokeValidateArguments(List.of("mvn", "a\u0000b"))).isNull();
+    }
+
+    @Test
+    void validateArguments_rejectsOversizedArgv() {
+        config = new SandboxConfig();
+        sandboxService = new SandboxService(config);
+
+        String huge = "a".repeat(70_000);
+        assertThat(invokeValidateArguments(List.of("mvn", huge))).isNull();
+    }
+
     // Helper methods to invoke private methods via reflection
+    @SuppressWarnings("unchecked")
+    private List<String> invokeValidateArguments(List<String> arguments) {
+        try {
+            java.lang.reflect.Method method = SandboxService.class.getDeclaredMethod("validateArguments", List.class);
+            method.setAccessible(true);
+            return (List<String>) method.invoke(sandboxService, arguments);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private Path invokeValidateWorkspacePath(Path path) {
         try {
             java.lang.reflect.Method method = SandboxService.class.getDeclaredMethod("validateWorkspacePath", Path.class);

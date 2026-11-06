@@ -1,26 +1,28 @@
 package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxResult;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
 
 @Component
 public class RunMavenBuildTool implements Tool {
 
     private final ObjectMapper objectMapper;
+    private final SandboxService sandboxService;
 
-    public RunMavenBuildTool(ObjectMapper objectMapper) {
+    public RunMavenBuildTool(ObjectMapper objectMapper, SandboxService sandboxService) {
         this.objectMapper = objectMapper;
+        this.sandboxService = sandboxService;
     }
 
     @Override
@@ -71,18 +73,6 @@ public class RunMavenBuildTool implements Tool {
                 return ToolResult.failure("runMavenBuild", "Path not found: " + params.path, System.currentTimeMillis() - start);
             }
             
-            // Check for mvnw or mvnw.cmd - use absolute paths to prevent command injection
-            Path mvnw = targetPath.resolve("mvnw");
-            Path mvnwCmd = targetPath.resolve("mvnw.cmd");
-            String mvnCmd;
-            if (Files.exists(mvnwCmd)) {
-                mvnCmd = mvnwCmd.toAbsolutePath().toString();
-            } else if (Files.exists(mvnw)) {
-                mvnCmd = mvnw.toAbsolutePath().toString();
-            } else {
-                mvnCmd = "mvn"; // Use system mvn (assumed to be in PATH)
-            }
-            
             List<String> goals = params.goals != null && !params.goals.isEmpty() ? params.goals : List.of("compile");
             String goalError = MavenGoalValidator.validate(goals);
             if (goalError != null) {
@@ -90,26 +80,26 @@ public class RunMavenBuildTool implements Tool {
             }
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 180;
             boolean skipTests = params.skipTests != null && params.skipTests;
-            
+
             List<String> command = new ArrayList<>();
-            command.add(mvnCmd);
+            // The sandbox image provides Maven; never execute a workspace script
+            // on the server host.
+            command.add("mvn");
             command.addAll(goals);
             if (skipTests) {
                 command.add("-DskipTests");
             }
-            
-            ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(targetPath.toFile());
-            pb.redirectErrorStream(true);
-            
-            Process process = pb.start();
-            String stdout = new String(process.getInputStream().readAllBytes());
-            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-            
-            int exitCode = finished ? process.exitValue() : -1;
-            
-            String result = objectMapper.writeValueAsString(new RunMavenBuildOutput(exitCode, stdout, exitCode == 0));
-            return ToolResult.success("runMavenBuild", result, System.currentTimeMillis() - start);
+
+            String relativePath = basePath.relativize(targetPath).toString();
+            SandboxResult sandboxResult = sandboxService.run(command, basePath, relativePath, timeout);
+            String output = sandboxResult.stdout() + sandboxResult.stderr();
+            int exitCode = sandboxResult.exitCode();
+            boolean success = !sandboxResult.timedOut() && !sandboxResult.oomKilled() && exitCode == 0;
+
+            String result = objectMapper.writeValueAsString(new RunMavenBuildOutput(exitCode, output, success));
+            return success
+                ? ToolResult.success("runMavenBuild", result, System.currentTimeMillis() - start)
+                : ToolResult.failure("runMavenBuild", output, System.currentTimeMillis() - start);
             
         } catch (Exception e) {
             return ToolResult.failure("runMavenBuild", e.getMessage(), System.currentTimeMillis() - start);

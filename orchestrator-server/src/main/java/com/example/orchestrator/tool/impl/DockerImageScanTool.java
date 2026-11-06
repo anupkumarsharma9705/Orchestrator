@@ -1,18 +1,18 @@
 package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxResult;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 @Component
@@ -29,9 +29,11 @@ public class DockerImageScanTool implements Tool {
             + "(?:@sha256:[a-fA-F0-9]{64})?$");
 
     private final ObjectMapper objectMapper;
+    private final SandboxService sandboxService;
 
-    public DockerImageScanTool(ObjectMapper objectMapper) {
+    public DockerImageScanTool(ObjectMapper objectMapper, SandboxService sandboxService) {
         this.objectMapper = objectMapper;
+        this.sandboxService = sandboxService;
     }
 
     @Override
@@ -80,9 +82,10 @@ public class DockerImageScanTool implements Tool {
     @Override
     public ToolResult execute(Project project, String input) {
         long start = System.currentTimeMillis();
+        Path exported = null;
         try {
             DockerImageScanInput params = objectMapper.readValue(input, DockerImageScanInput.class);
-            
+
             String image = params.image;
             if (image == null || image.isBlank()) {
                 return ToolResult.failure("dockerImageScan", "Image name is required", System.currentTimeMillis() - start);
@@ -91,9 +94,20 @@ public class DockerImageScanTool implements Tool {
                 return ToolResult.failure("dockerImageScan", "Invalid image reference: " + image,
                     System.currentTimeMillis() - start);
             }
-            
+
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 180;
-            
+
+            Path basePath = project.rootPath().toAbsolutePath().normalize();
+            // Export the image from the Docker daemon into the mounted
+            // workspace. The scanner then reads the tar inside the sandbox;
+            // the Docker socket is never exposed to a container.
+            exported = Files.createTempFile(basePath, ".trivy-image-", ".tar");
+            SandboxResult saveResult = sandboxService.saveImageToFile(image, exported);
+            if (saveResult.exitCode() != 0) {
+                return ToolResult.failure("dockerImageScan", saveResult.stderr(),
+                    System.currentTimeMillis() - start);
+            }
+
             List<String> command = new ArrayList<>();
             command.add("trivy");
             command.add("image");
@@ -101,28 +115,34 @@ public class DockerImageScanTool implements Tool {
             command.add("json");
             command.add("--exit-code");
             command.add("0"); // Don't fail on vulnerabilities
-            command.add(params.image);
-            
-            ProcessBuilder pb = new ProcessBuilder(command);
-            pb.redirectErrorStream(true);
-            
-            Process process = pb.start();
-            String stdout = new String(process.getInputStream().readAllBytes());
-            boolean finished = process.waitFor(params.timeoutSeconds != null ? params.timeoutSeconds : 180, java.util.concurrent.TimeUnit.SECONDS);
-            
-            int exitCode = finished ? process.exitValue() : -1;
-            
+            command.add("--input");
+            command.add(basePath.relativize(exported).toString());
+
+            SandboxResult sandboxResult = sandboxService.run(command, basePath, ".", timeout);
+            String stdout = sandboxResult.stdout();
+            int exitCode = sandboxResult.exitCode();
+            boolean finished = !sandboxResult.timedOut();
+
             List<DockerImageVulnerability> vulnerabilities = parseVulnerabilities(stdout);
-            
-            DockerImageScanOutput output = new DockerImageScanOutput(exitCode, stdout, finished, vulnerabilities);
+
+            DockerImageScanOutput output = new DockerImageScanOutput(
+                exitCode, stdout + sandboxResult.stderr(), finished, vulnerabilities);
             String result = objectMapper.writeValueAsString(output);
-            
+
             return finished
                 ? ToolResult.success("dockerImageScan", result, System.currentTimeMillis() - start)
-                : ToolResult.failure("dockerImageScan", "Trivy image scan failed: " + stdout, System.currentTimeMillis() - start);
-            
+                : ToolResult.failure("dockerImageScan", "Trivy image scan failed: " + stdout + sandboxResult.stderr(), System.currentTimeMillis() - start);
+
         } catch (Exception e) {
             return ToolResult.failure("dockerImageScan", e.getMessage(), System.currentTimeMillis() - start);
+        } finally {
+            if (exported != null) {
+                try {
+                    Files.deleteIfExists(exported);
+                } catch (Exception ignored) {
+                    // Best-effort cleanup; the file is inside the workspace.
+                }
+            }
         }
     }
 
@@ -132,7 +152,6 @@ public class DockerImageScanTool implements Tool {
             var jsonNode = new com.fasterxml.jackson.databind.ObjectMapper().readTree(jsonOutput);
             if (jsonNode.has("Results")) {
                 for (var result : jsonNode.get("Results")) {
-                    String target = result.path("Target").asText("");
                     if (result.has("Vulnerabilities")) {
                         for (var vuln : result.get("Vulnerabilities")) {
                             vulns.add(new DockerImageVulnerability(
@@ -150,7 +169,7 @@ public class DockerImageScanTool implements Tool {
         } catch (Exception e) {
             // Ignore parsing errors
         }
-        return new ArrayList<>();
+        return vulns;
     }
 
     private record DockerImageScanInput(String image, Integer timeoutSeconds) {}

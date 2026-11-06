@@ -2,6 +2,8 @@ package com.example.orchestrator;
 
 import com.example.orchestrator.config.PipelineProperties;
 import com.example.orchestrator.model.router.ModelRouterConfig;
+import com.example.orchestrator.project.WorkspaceProperties;
+import com.example.orchestrator.security.SecurityProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,7 +15,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @SpringBootApplication
-@EnableConfigurationProperties({PipelineProperties.class, ModelRouterConfig.class})
+@EnableConfigurationProperties({PipelineProperties.class, ModelRouterConfig.class,
+        WorkspaceProperties.class, SecurityProperties.class})
 // Scan only the server's repositories here. engine-store's
 // StoreAutoConfiguration registers com.example.orchestrator.store.repository;
 // listing it in both places creates duplicate bean definitions.

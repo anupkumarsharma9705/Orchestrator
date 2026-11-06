@@ -68,7 +68,7 @@ public class SandboxConfig {
     private static String defaultDockerHost() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         return os.contains("win")
-                ? "npipe:////./pipe/docker_engine"
+                ? "npipe:////./pipe/dockerDesktopLinuxEngine"
                 : "unix:///var/run/docker.sock";
     }
 
@@ -80,7 +80,8 @@ public class SandboxConfig {
      */
     private List<String> allowedDockerHosts = List.of(
         "tcp://localhost:2376",
-        "npipe:////./pipe/docker_engine"
+        "npipe:////./pipe/docker_engine",
+        "npipe:////./pipe/dockerDesktopLinuxEngine"
     );
 
     /** Require TLS for TCP Docker connections */
@@ -119,6 +120,15 @@ public class SandboxConfig {
     
     @NotBlank
     private String workspaceMountPath = "/workspace";
+
+    /**
+     * Host directories that may be mounted into the sandbox.
+     *
+     * <p>Every project workspace must live below one of these roots. Leaving
+     * this empty falls back to {@code ~/.orchestrator/workspaces} so the
+     * sandbox never silently accepts an arbitrary host directory.</p>
+     */
+    private List<String> workspaceRoots = List.of();
     
     /** Enable network access for containers (DANGEROUS - default false) */
     private boolean enableNetwork = false;
@@ -214,6 +224,9 @@ public class SandboxConfig {
 
     public String getWorkspaceMountPath() { return workspaceMountPath; }
     public void setWorkspaceMountPath(String workspaceMountPath) { this.workspaceMountPath = workspaceMountPath; }
+
+    public List<String> getWorkspaceRoots() { return workspaceRoots; }
+    public void setWorkspaceRoots(List<String> workspaceRoots) { this.workspaceRoots = workspaceRoots; }
 
     public boolean isEnableNetwork() { return enableNetwork; }
     public void setEnableNetwork(boolean enableNetwork) { this.enableNetwork = enableNetwork; }
@@ -330,9 +343,13 @@ public class SandboxConfig {
                 throw new IllegalArgumentException("Unix socket path must be under /var/run/docker or /run/docker: " + socketPath);
             }
         } else if (host.startsWith("npipe://")) {
-            // Windows named pipe - validate format
-            if (!host.contains("docker_engine")) {
-                throw new IllegalArgumentException("Named pipe must reference docker_engine: " + host);
+            // Docker Desktop exposes dockerDesktopLinuxEngine for the Linux
+            // engine and docker_engine for the classic Windows engine. Both
+            // names are legitimate; the host must still be in the allow-list
+            // checked above.
+            if (!host.contains("docker_engine") && !host.contains("dockerDesktopLinuxEngine")) {
+                throw new IllegalArgumentException(
+                    "Named pipe must reference docker_engine or dockerDesktopLinuxEngine: " + host);
             }
         }
     }
@@ -360,6 +377,10 @@ public class SandboxConfig {
         }
         if (maxProcesses < 10) {
             throw new IllegalStateException("maxProcesses must be at least 10");
+        }
+
+        if (workspaceRoots != null && workspaceRoots.stream().anyMatch(root -> root == null || root.isBlank())) {
+            throw new IllegalStateException("sandbox workspace roots must not contain blank entries");
         }
 
         // Validate security options

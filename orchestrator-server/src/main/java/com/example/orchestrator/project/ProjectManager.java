@@ -24,13 +24,18 @@ public class ProjectManager {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectManager.class);
 
+    private static final java.util.regex.Pattern SAFE_ID = java.util.regex.Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
+    private static final java.util.Set<String> ALLOWED_BUILD_TOOLS = java.util.Set.of("maven", "gradle");
+
     private final ProjectRepository projectRepository;
+    private final WorkspaceProperties workspaceProperties;
 
     // Backup directory
     private final Path backupDir;
 
-    public ProjectManager(ProjectRepository projectRepository) {
+    public ProjectManager(ProjectRepository projectRepository, WorkspaceProperties workspaceProperties) {
         this.projectRepository = projectRepository;
+        this.workspaceProperties = workspaceProperties;
         this.backupDir = Path.of(System.getProperty("user.home"), ".orchestrator", "backups", "projects");
         try {
             Files.createDirectories(backupDir);
@@ -40,15 +45,30 @@ public class ProjectManager {
     }
 
     public Project register(String id, String name, Path rootPath, String buildTool, String testCommand, Map<String, String> environment) {
-        Path memoryPath = rootPath.resolve(".ai");
+        if (id == null || !SAFE_ID.matcher(id).matches()) {
+            throw new IllegalArgumentException("Project id must match " + SAFE_ID.pattern());
+        }
+        if (name == null || name.isBlank() || name.length() > 200) {
+            throw new IllegalArgumentException("Project name must be between 1 and 200 characters");
+        }
+
+        String normalisedBuildTool = buildTool == null ? "maven" : buildTool.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!ALLOWED_BUILD_TOOLS.contains(normalisedBuildTool)) {
+            throw new IllegalArgumentException("Unsupported build tool: " + buildTool);
+        }
+
+        // Canonicalise and enforce the workspace allow-list before persisting.
+        Path canonicalRoot = workspaceProperties.requireAllowedDirectory(rootPath);
+        Path memoryPath = canonicalRoot.resolve(".ai").normalize();
+
         Project project = new Project(
                 id,
                 name,
-                rootPath.toAbsolutePath().normalize(),
-                memoryPath.toAbsolutePath().normalize(),
-                buildTool,
+                canonicalRoot,
+                memoryPath,
+                normalisedBuildTool,
                 testCommand,
-                environment,
+                environment == null ? Map.of() : Map.copyOf(environment),
                 Instant.now(),
                 Instant.now()
         );

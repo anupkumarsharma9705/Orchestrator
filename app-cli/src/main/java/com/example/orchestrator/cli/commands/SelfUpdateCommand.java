@@ -112,15 +112,28 @@ public class SelfUpdateCommand implements Callable<Integer> {
 
         System.out.println(Ansi.info(" Downloading " + jarAsset.name() + " (" + formatBytes(jarAsset.size()) + ")..."));
 
+        // Self-update replaces the running binary. It must never install an
+        // artifact whose integrity cannot be checked, so a published SHA256 is
+        // mandatory.
+        String expectedSha256 = resolveExpectedSha256(latest, jarAsset);
+        if (expectedSha256 == null) {
+            System.err.println(Ansi.error(
+                " No SHA256 checksum published for " + jarAsset.name()
+                    + " in release " + latestVersion));
+            System.err.println(Ansi.dim(
+                " Refusing to self-update without integrity verification. Publish <jar>.sha256 or checksums.txt."));
+            return 1;
+        }
+
         if (dryRun) {
             System.out.println(Ansi.info(" Dry-run mode: would download and install " + latestVersion));
             System.out.println(Ansi.dim(" URL: " + jarAsset.browserDownloadUrl()));
-            System.out.println(Ansi.dim(" SHA256: " + (jarAsset.sha256() != null ? jarAsset.sha256() : "(not provided)")));
+            System.out.println(Ansi.dim(" SHA256: " + expectedSha256));
             return 0;
         }
 
         // Download and verify
-        Path tempJar = downloadAndVerify(jarAsset);
+        Path tempJar = downloadAndVerify(jarAsset, expectedSha256);
         if (tempJar == null) {
             return 1;
         }
@@ -210,7 +223,109 @@ public class SelfUpdateCommand implements Callable<Integer> {
         return null;
     }
 
-    private Path downloadAndVerify(ReleaseAsset asset) throws IOException, InterruptedException {
+    /**
+     * Resolves the expected SHA256 for the JAR. GitHub's release asset JSON does
+     * not carry a checksum, so the value normally comes from a sidecar asset:
+     * {@code <jar>.sha256}, {@code checksums.txt} or {@code SHA256SUMS}.
+     *
+     * @return a 64-character hex digest, or {@code null} when none is published
+     */
+    private String resolveExpectedSha256(ReleaseInfo release, ReleaseAsset jarAsset)
+            throws IOException, InterruptedException {
+        if (jarAsset.sha256() != null && !jarAsset.sha256().isBlank()) {
+            String inline = normaliseSha256(jarAsset.sha256());
+            if (inline != null) {
+                return inline;
+            }
+        }
+
+        ReleaseAsset checksumAsset = findChecksumAsset(release, jarAsset.name());
+        if (checksumAsset == null) {
+            return null;
+        }
+
+        String content = downloadText(checksumAsset.browserDownloadUrl());
+        if (content == null) {
+            return null;
+        }
+
+        for (String line : content.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            // Accept "<digest>", "<digest>  <file>" and "*<file>" forms.
+            String[] parts = trimmed.split("\\s+", 2);
+            String digest = normaliseSha256(parts[0]);
+            if (digest == null) {
+                continue;
+            }
+            if (parts.length == 1) {
+                return digest;
+            }
+            String listedFile = parts[1].trim().replaceFirst("^\\*", "");
+            if (listedFile.equals(jarAsset.name())) {
+                return digest;
+            }
+        }
+        return null;
+    }
+
+    private ReleaseAsset findChecksumAsset(ReleaseInfo release, String jarName) {
+        if (release.assets() == null) {
+            return null;
+        }
+        String[] exactNames = {
+            jarName + ".sha256",
+            jarName + ".sha256.txt",
+            "SHA256SUMS",
+            "SHA256SUMS.txt",
+            "checksums.txt",
+            "checksums.sha256"
+        };
+        for (String expected : exactNames) {
+            for (ReleaseAsset asset : release.assets()) {
+                if (asset.name() != null && asset.name().equalsIgnoreCase(expected)) {
+                    return asset;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String normaliseSha256(String value) {
+        if (value == null) {
+            return null;
+        }
+        String candidate = value.trim();
+        if (candidate.startsWith("\uFEFF")) {
+            candidate = candidate.substring(1);
+        }
+        return candidate.matches("^[a-fA-F0-9]{64}$") ? candidate.toLowerCase() : null;
+    }
+
+    private String downloadText(String url) throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "text/plain")
+            .header("User-Agent", "Companion-CLI-Updater")
+            .timeout(Duration.ofMinutes(1))
+            .GET()
+            .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            System.err.println(Ansi.error(
+                " Failed to download checksum file: HTTP " + response.statusCode()));
+            return null;
+        }
+        return response.body();
+    }
+
+    private Path downloadAndVerify(ReleaseAsset asset, String expectedSha256) throws IOException, InterruptedException {
         Path tempDir = Files.createTempDirectory("companion-update-");
         Path tempJar = tempDir.resolve("companion-new.jar");
 
@@ -242,22 +357,18 @@ public class SelfUpdateCommand implements Callable<Integer> {
 
         System.out.println(Ansi.success(" Done"));
 
-        // Verify SHA256 if provided
-        if (asset.sha256() != null && !asset.sha256().isEmpty()) {
-            System.out.print(Ansi.dim(" Verifying SHA256... "));
-            String actualSha256 = calculateSha256(tempJar);
-            if (!actualSha256.equalsIgnoreCase(asset.sha256())) {
-                System.out.println(Ansi.error(" FAILED"));
-                System.err.println(Ansi.error(" Checksum mismatch!"));
-                System.err.println(Ansi.dim(" Expected: " + asset.sha256()));
-                System.err.println(Ansi.dim(" Actual:   " + actualSha256));
-                Files.deleteIfExists(tempJar);
-                return null;
-            }
-            System.out.println(Ansi.success(" Verified"));
-        } else {
-            System.out.println(Ansi.warning(" No SHA256 provided in release asset; skipping verification"));
+        // Verify SHA256. The caller guarantees expectedSha256 is present.
+        System.out.print(Ansi.dim(" Verifying SHA256... "));
+        String actualSha256 = calculateSha256(tempJar);
+        if (!actualSha256.equalsIgnoreCase(expectedSha256)) {
+            System.out.println(Ansi.error(" FAILED"));
+            System.err.println(Ansi.error(" Checksum mismatch - refusing to install the update!"));
+            System.err.println(Ansi.dim(" Expected: " + expectedSha256));
+            System.err.println(Ansi.dim(" Actual:   " + actualSha256));
+            Files.deleteIfExists(tempJar);
+            return null;
         }
+        System.out.println(Ansi.success(" Verified"));
 
         return tempJar;
     }

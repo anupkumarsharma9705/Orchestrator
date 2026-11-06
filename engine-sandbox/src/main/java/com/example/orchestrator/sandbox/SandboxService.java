@@ -5,8 +5,8 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectContainerResponse;
-import com.github.dockerjava.api.command.LogContainerCmd;
 import com.github.dockerjava.api.model.Bind;
+import com.github.dockerjava.api.model.BuildResponseItem;
 import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
@@ -17,12 +17,14 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.transport.DockerHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,6 +33,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -48,25 +51,50 @@ import java.util.regex.Pattern;
  * - Proper log retrieval
  * - Workspace boundary enforcement
  */
-@Service
 public class SandboxService {
 
     private static final Logger log = LoggerFactory.getLogger(SandboxService.class);
 
-    // Allowed workspace base directory - all workspace paths must be under this
-    private static final Path ALLOWED_WORKSPACE_BASE = Paths.get(System.getProperty("user.home"), ".orchestrator", "workspaces").toAbsolutePath().normalize();
-    
+    private static final Path DEFAULT_WORKSPACE_BASE =
+        Paths.get(System.getProperty("user.home"), ".orchestrator", "workspaces")
+            .toAbsolutePath().normalize();
+
     // Pattern to detect path traversal attempts (cross-platform)
     private static final Pattern PATH_TRAVERSAL_PATTERN = Pattern.compile("(^|[/\\\\])\\\\.(?:\\\\.|$)");
-    
+
     // Windows reserved names that shouldn't be used in paths
     private static final Pattern WINDOWS_RESERVED_PATTERN = Pattern.compile("(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\\\..*)?$");
 
+    // No shell is involved: the executable must be a bare tool name.
+    private static final Pattern SAFE_EXECUTABLE_PATTERN = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9._-]*$");
+    private static final Pattern SAFE_DOCKERFILE_PATTERN = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9._-]*$");
+    private static final Pattern SAFE_IMAGE_PATTERN = Pattern.compile(
+        "^[a-zA-Z0-9][a-zA-Z0-9._-]*(?::[0-9]{1,5})?"
+            + "(?:/[a-zA-Z0-9][a-zA-Z0-9._-]*)*"
+            + "(?::[a-zA-Z0-9][a-zA-Z0-9._-]{0,127})?"
+            + "(?:@sha256:[a-fA-F0-9]{64})?$");
+
     private final SandboxConfig config;
+    private final List<Path> allowedWorkspaceRoots;
     private DockerClient dockerClient;
 
     public SandboxService(SandboxConfig config) {
         this.config = config;
+        this.allowedWorkspaceRoots = resolveWorkspaceRoots(config);
+    }
+
+    private static List<Path> resolveWorkspaceRoots(SandboxConfig config) {
+        List<String> configured = config.getWorkspaceRoots();
+        if (configured == null || configured.isEmpty()) {
+            return List.of(DEFAULT_WORKSPACE_BASE);
+        }
+        List<Path> roots = new ArrayList<>();
+        for (String root : configured) {
+            if (root != null && !root.isBlank()) {
+                roots.add(Path.of(root).toAbsolutePath().normalize());
+            }
+        }
+        return roots.isEmpty() ? List.of(DEFAULT_WORKSPACE_BASE) : List.copyOf(roots);
     }
 
     @PostConstruct
@@ -75,9 +103,11 @@ public class SandboxService {
         config.validateConfiguration();
 
         try {
-            Files.createDirectories(ALLOWED_WORKSPACE_BASE);
+            for (Path root : allowedWorkspaceRoots) {
+                Files.createDirectories(root);
+            }
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to create sandbox workspace base", e);
+            throw new IllegalStateException("Failed to create sandbox workspace roots", e);
         }
 
         DockerClient client;
@@ -221,8 +251,8 @@ public class SandboxService {
             // Verify we can list containers (basic API functionality)
             dockerClient.listContainersCmd().exec();
             
-            // Check disk space for workspace base
-            var workspaceBase = ALLOWED_WORKSPACE_BASE.toFile();
+            // Check disk space for the first configured workspace root
+            var workspaceBase = allowedWorkspaceRoots.get(0).toFile();
             long freeSpace = workspaceBase.getFreeSpace();
             long totalSpace = workspaceBase.getTotalSpace();
             double freePercent = (double) freeSpace / totalSpace * 100;
@@ -261,9 +291,30 @@ public class SandboxService {
      * @return SandboxResult with exit code, stdout, stderr, duration
      */
     public SandboxResult run(String command, Path workspacePath, int timeoutSeconds) {
+        String[] cmdArray = parseCommandSecure(command);
+        if (cmdArray == null) {
+            return SandboxResult.error("Command contains invalid characters: " + sanitizeForLog(command), Duration.ZERO);
+        }
+        return run(List.of(cmdArray), workspacePath, ".", timeoutSeconds);
+    }
+
+    /**
+     * Runs an explicit argument vector inside the sandbox. No host shell is
+     * involved, so arguments are passed verbatim to the container process.
+     *
+     * @param arguments executable followed by its arguments
+     * @param workspacePath host workspace, mounted at {@code workspaceMountPath}
+     * @param relativeWorkingDirectory directory relative to the workspace
+     * @param timeoutSeconds timeout in seconds (0 = default)
+     */
+    public SandboxResult run(List<String> arguments, Path workspacePath, String relativeWorkingDirectory, int timeoutSeconds) {
         Instant start = Instant.now();
         int timeout = timeoutSeconds > 0 ? timeoutSeconds : config.getDefaultTimeoutSeconds();
         timeout = Math.min(timeout, config.getMaxTimeoutSeconds());
+
+        if (dockerClient == null) {
+            return SandboxResult.error("Sandbox unavailable: Docker daemon not reachable", Duration.ZERO);
+        }
 
         // LV-08: Fail-closed - verify Docker connectivity before each run
         try {
@@ -273,24 +324,31 @@ public class SandboxService {
             return SandboxResult.error("Sandbox unavailable: Docker daemon not reachable", Duration.ZERO);
         }
 
-        log.info("Running command in sandbox: {} (timeout: {}s)", sanitizeForLog(command), timeout);
+        List<String> validatedArguments = validateArguments(arguments);
+        if (validatedArguments == null) {
+            return SandboxResult.error("Invalid sandbox command arguments", Duration.ZERO);
+        }
 
-        // Validate workspace path - MUST be within allowed base directory
+        String containerWorkingDirectory = toContainerWorkingDirectory(relativeWorkingDirectory);
+        if (containerWorkingDirectory == null) {
+            return SandboxResult.error("Invalid sandbox working directory: " + relativeWorkingDirectory, Duration.ZERO);
+        }
+
+        log.info("Running command in sandbox: {} (workdir: {}, timeout: {}s)",
+            sanitizeForLog(String.join(" ", validatedArguments)), containerWorkingDirectory, timeout);
+
+        // Validate workspace path - MUST be within an allowed root directory
         Path validatedWorkspacePath = validateWorkspacePath(workspacePath);
         if (validatedWorkspacePath == null) {
             return SandboxResult.error("Workspace path not allowed: " + workspacePath, Duration.ZERO);
         }
 
-        // Validate command - no shell metacharacters allowed
-        String[] cmdArray = parseCommandSecure(command);
-        if (cmdArray == null) {
-            return SandboxResult.error("Command contains invalid characters: " + sanitizeForLog(command), Duration.ZERO);
-        }
+        String[] cmdArray = validatedArguments.toArray(new String[0]);
 
         String containerId = null;
         try {
             // Create container
-            CreateContainerResponse container = createContainer(cmdArray, validatedWorkspacePath);
+            CreateContainerResponse container = createContainer(cmdArray, validatedWorkspacePath, containerWorkingDirectory);
             containerId = container.getId();
 
             // Start container
@@ -350,22 +408,19 @@ public class SandboxService {
      * Prevents path traversal attacks.
      */
     private Path validateWorkspacePath(Path workspacePath) {
+        if (workspacePath == null) {
+            return null;
+        }
         try {
             Path absolutePath = workspacePath.toAbsolutePath().normalize();
-            
-            // Check if path is within allowed base directory
-            if (!absolutePath.startsWith(ALLOWED_WORKSPACE_BASE)) {
-                log.warn("Workspace path outside allowed base: {} (base: {})", absolutePath, ALLOWED_WORKSPACE_BASE);
-                return null;
-            }
-            
-            // Check for path traversal attempts
-            String pathStr = absolutePath.toString();
+
+            // Check for path traversal attempts in the original input.
+            String pathStr = workspacePath.toString();
             if (PATH_TRAVERSAL_PATTERN.matcher(pathStr).find()) {
                 log.warn("Path traversal attempt detected: {}", pathStr);
                 return null;
             }
-            
+
             // Check for Windows reserved names
             for (Path name : absolutePath) {
                 if (WINDOWS_RESERVED_PATTERN.matcher(name.toString()).matches()) {
@@ -373,25 +428,93 @@ public class SandboxService {
                     return null;
                 }
             }
-            
+
             // Ensure directory exists
             if (!Files.exists(absolutePath)) {
                 log.warn("Workspace path does not exist: {}", absolutePath);
                 return null;
             }
-            
+
             // Ensure it's a directory
             if (!Files.isDirectory(absolutePath)) {
                 log.warn("Workspace path is not a directory: {}", absolutePath);
                 return null;
             }
-            
-            return absolutePath;
-            
+
+            // Resolve symlinks so a link inside an allowed root cannot escape it.
+            Path canonicalPath = absolutePath.toRealPath();
+
+            boolean insideAllowedRoot = false;
+            for (Path root : allowedWorkspaceRoots) {
+                Path canonicalRoot = root.toRealPath();
+                if (canonicalPath.startsWith(canonicalRoot)) {
+                    insideAllowedRoot = true;
+                    break;
+                }
+            }
+            if (!insideAllowedRoot) {
+                log.warn("Workspace path outside allowed roots: {} (roots: {})", canonicalPath, allowedWorkspaceRoots);
+                return null;
+            }
+
+            return canonicalPath;
+
         } catch (Exception e) {
             log.warn("Workspace path validation failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Validates an argv list. The executable must be a bare tool name; every
+     * argument is rejected if it contains a NUL byte. Shell metacharacters are
+     * harmless without a shell, but are not needed by any supported tool.
+     */
+    private List<String> validateArguments(List<String> arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return null;
+        }
+        List<String> validated = new ArrayList<>(arguments.size());
+        int totalLength = 0;
+        for (String argument : arguments) {
+            if (argument == null || argument.indexOf('\0') >= 0) {
+                return null;
+            }
+            totalLength += argument.length() + 1;
+            validated.add(argument);
+        }
+        if (totalLength > 65536) {
+            log.warn("Sandbox argument list rejected - too long: {} bytes", totalLength);
+            return null;
+        }
+        String executable = validated.get(0);
+        if (!SAFE_EXECUTABLE_PATTERN.matcher(executable).matches()) {
+            log.warn("Sandbox executable rejected: {}", executable);
+            return null;
+        }
+        return List.copyOf(validated);
+    }
+
+    /**
+     * Maps a workspace-relative directory to the container mount path.
+     */
+    private String toContainerWorkingDirectory(String relativeWorkingDirectory) {
+        String relative = relativeWorkingDirectory == null || relativeWorkingDirectory.isBlank()
+            ? "." : relativeWorkingDirectory.trim();
+        Path normalised;
+        try {
+            normalised = Path.of(relative).normalize();
+        } catch (Exception e) {
+            return null;
+        }
+        if (normalised.isAbsolute() || normalised.startsWith("..")) {
+            return null;
+        }
+        String posixRelative = normalised.toString().replace('\\', '/');
+        if (posixRelative.equals(".") || posixRelative.isEmpty()) {
+            return config.getWorkspaceMountPath();
+        }
+        return config.getWorkspaceMountPath() + "/" + posixRelative;
     }
 
     /**
@@ -460,15 +583,130 @@ public class SandboxService {
     }
 
     /**
+     * Builds an image through the Docker daemon API.
+     *
+     * <p>This deliberately does not invoke the {@code docker} CLI on the host.
+     * Build steps execute inside the daemon's build sandbox, and the build
+     * context is the already-validated workspace directory.</p>
+     */
+    public SandboxResult buildImage(Path workspacePath, String dockerfile, String tag,
+                                    Map<String, String> buildArgs, int timeoutSeconds) {
+        Instant start = Instant.now();
+        int timeout = timeoutSeconds > 0 ? timeoutSeconds : config.getDefaultTimeoutSeconds();
+        timeout = Math.min(timeout, config.getMaxTimeoutSeconds());
+
+        if (dockerClient == null) {
+            return SandboxResult.error("Sandbox unavailable: Docker daemon not reachable", Duration.ZERO);
+        }
+        Path validatedWorkspacePath = validateWorkspacePath(workspacePath);
+        if (validatedWorkspacePath == null) {
+            return SandboxResult.error("Workspace path not allowed: " + workspacePath, Duration.ZERO);
+        }
+        if (dockerfile == null || !SAFE_DOCKERFILE_PATTERN.matcher(dockerfile).matches()) {
+            return SandboxResult.error("Invalid Dockerfile name", Duration.ZERO);
+        }
+        if (tag == null || !SAFE_IMAGE_PATTERN.matcher(tag).matches()) {
+            return SandboxResult.error("Invalid image tag: " + tag, Duration.ZERO);
+        }
+        Path dockerfilePath = validatedWorkspacePath.resolve(dockerfile).normalize();
+        if (!dockerfilePath.startsWith(validatedWorkspacePath) || !Files.isRegularFile(dockerfilePath)) {
+            return SandboxResult.error("Dockerfile not found: " + dockerfile, Duration.ZERO);
+        }
+
+        StringBuilder output = new StringBuilder();
+        StringBuilder errors = new StringBuilder();
+        try {
+            ResultCallback.Adapter<BuildResponseItem> callback = new ResultCallback.Adapter<>() {
+                @Override
+                public void onNext(BuildResponseItem item) {
+                    if (item.getStream() != null) {
+                        output.append(item.getStream());
+                    }
+                    if (item.getError() != null) {
+                        errors.append(item.getError());
+                    }
+                    super.onNext(item);
+                }
+            };
+
+            var buildCommand = dockerClient.buildImageCmd()
+                .withBaseDirectory(validatedWorkspacePath.toFile())
+                .withDockerfile(dockerfilePath.toFile())
+                .withTags(Set.of(tag));
+            if (buildArgs != null) {
+                buildArgs.forEach(buildCommand::withBuildArg);
+            }
+            buildCommand.exec(callback);
+
+            boolean completed = callback.awaitCompletion(timeout, TimeUnit.SECONDS);
+            if (!completed) {
+                callback.close();
+                return SandboxResult.timeout(Duration.between(start, Instant.now()));
+            }
+
+            int exitCode = errors.length() == 0 ? 0 : 1;
+            return SandboxResult.success(exitCode, output.toString(), errors.toString(),
+                Duration.between(start, Instant.now()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return SandboxResult.error("Image build interrupted", Duration.between(start, Instant.now()));
+        } catch (Exception e) {
+            log.error("Sandbox image build failed: {}", e.getMessage(), e);
+            return SandboxResult.error("Image build failed: " + e.getMessage(),
+                Duration.between(start, Instant.now()));
+        }
+    }
+
+    /**
+     * Exports an image from the Docker daemon to a tar file inside an allowed
+     * workspace. Scanners can then inspect the tar inside the sandbox without
+     * mounting the Docker socket into the container.
+     */
+    public SandboxResult saveImageToFile(String image, Path destination) {
+        Instant start = Instant.now();
+        if (dockerClient == null) {
+            return SandboxResult.error("Sandbox unavailable: Docker daemon not reachable", Duration.ZERO);
+        }
+        if (image == null || !SAFE_IMAGE_PATTERN.matcher(image).matches()) {
+            return SandboxResult.error("Invalid image reference: " + image, Duration.ZERO);
+        }
+        if (destination == null) {
+            return SandboxResult.error("Destination is required", Duration.ZERO);
+        }
+        Path destinationPath = destination.toAbsolutePath().normalize();
+        Path parent = destinationPath.getParent();
+        if (parent == null || validateWorkspacePath(parent) == null) {
+            return SandboxResult.error("Destination path not allowed", Duration.ZERO);
+        }
+
+        try (InputStream imageStream = dockerClient.saveImageCmd(image).exec();
+             OutputStream outputStream = Files.newOutputStream(destinationPath)) {
+            imageStream.transferTo(outputStream);
+            return SandboxResult.success(0, destinationPath.toString(), "",
+                Duration.between(start, Instant.now()));
+        } catch (Exception e) {
+            log.error("Failed to export image {}: {}", image, e.getMessage(), e);
+            return SandboxResult.error("Failed to export image: " + e.getMessage(),
+                Duration.between(start, Instant.now()));
+        }
+    }
+
+    /**
      * Creates the Docker container with all security and resource limits.
      */
-    private CreateContainerResponse createContainer(String[] cmdArray, Path workspacePath) {
+    private CreateContainerResponse createContainer(String[] cmdArray, Path workspacePath, String containerWorkingDirectory) {
         // Validate the Docker image against security policies
         config.validateImage(config.getDockerImage());
         
         // M4, M10: Generate unique Maven cache volume per container to prevent concurrent build corruption
         String mavenCacheVolume = getJobMavenCacheVolume();
-        
+
+        // docker-java's withBinds replaces the existing array, so both mounts
+        // must be supplied in a single call.
+        List<Bind> binds = new ArrayList<>();
+        binds.add(Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":rw"));
+        binds.add(Bind.parse(mavenCacheVolume + ":/home/sandbox/.m2:rw"));
+
         HostConfig hostConfig = HostConfig.newHostConfig()
             // Memory limit
             .withMemory(config.getMemoryLimitMb() * 1024L * 1024L)
@@ -477,14 +715,16 @@ public class SandboxService {
             .withCpuCount(config.getCpuLimitCores())
             // Process limit
             .withPidsLimit((long) config.getMaxProcesses())
-            // Workspace mount (read-write) - validated path
-            .withBinds(Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":rw"))
-            // M4, M10: Unique Maven cache volume per container run to avoid concurrent build corruption
-            .withBinds(Bind.parse(mavenCacheVolume + ":/home/sandbox/.m2:rw"))
+            // Workspace mount (read-write) and isolated Maven cache
+            .withBinds(binds)
             // Network - disabled by default
             .withNetworkMode(config.isEnableNetwork() ? "bridge" : "none")
             // Security - READ-ONLY ROOT FILESYSTEM
             .withReadonlyRootfs(true)
+            // Writable scratch/cache locations. Everything else stays read-only.
+            .withTmpFs(Map.of(
+                "/tmp", "rw,nosuid,nodev,size=512m,mode=1777",
+                "/home/sandbox/.cache", "rw,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=0755"))
             // Drop ALL capabilities by default
             .withCapDrop(Capability.ALL)
             // Add only explicitly allowed capabilities (if any)
@@ -499,7 +739,7 @@ public class SandboxService {
         return dockerClient.createContainerCmd(config.getDockerImage())
             .withCmd(cmdArray)
             .withHostConfig(hostConfig)
-            .withWorkingDir(config.getWorkspaceMountPath())
+            .withWorkingDir(containerWorkingDirectory)
             .withAttachStdout(true)
             .withAttachStderr(true)
             .withTty(false)

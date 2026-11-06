@@ -14,9 +14,9 @@ title: Architecture - Security
 |-------|-----------|----------------|
 | **Network** | mTLS between CLI and server | Spring Security + PKCS12 key/trust stores |
 | **Container** | Sandbox isolation | Dropped capabilities, read-only rootfs, no network, non-root user |
-| **Application** | API-key auth, RBAC, input validation | Spring Security, Jakarta Validation |
+| **Application** | API-key auth, RBAC, input validation | Spring Security method security, Jakarta Validation |
 | **Code** | ReDoS protection, secret scanning | Bounded regexes, secret scanner, Gitleaks in CI |
-| **Supply chain** | Image allow/deny rules, checksums | Sandbox registry rules, release SHA-256 |
+| **Supply chain** | Image allow/deny rules, checksums | Sandbox registry rules, mandatory release SHA-256 |
 
 ## Threat model
 
@@ -24,7 +24,7 @@ title: Architecture - Security
 |--------|------------|--------|------------|
 | Prompt injection | Medium | High | Prompt sanitizer + input size limits |
 | Code execution in sandbox | Low | Critical | Dropped caps, read-only rootfs, no network |
-| Path traversal | Low | High | Sandbox workspace boundary validation |
+| Path traversal | Low | High | Canonical workspace allow-list for projects and sandbox mounts |
 | Resource exhaustion | Medium | High | Container limits and timeouts |
 | Supply chain attack | Low | Critical | Registry allow/deny list, release checksums |
 
@@ -53,16 +53,35 @@ When a Docker daemon is available, `engine-sandbox` runs builds with:
 --security-opt no-new-privileges
 ```
 
-The sandbox image runs as uid/gid `1000:1000`. If Docker is unreachable, the
-server starts in degraded mode and containerized verification is unavailable.
+The sandbox image runs as uid/gid `1000:1000`. Workspaces are only mounted when
+they resolve below a configured `workspace-roots` entry. If Docker is
+unreachable, sandbox operations **fail closed**: they return an error and never
+fall back to running the command on the host.
 
 ### Application
 
-- **Server authentication**: shared API key via `Authorization: Bearer <key>`
-  or `X-API-Key`; constant-time comparison; at least 32 characters.
+- **Server authentication**: shared bootstrap API key via
+  `Authorization: Bearer <key>` or `X-API-Key`; constant-time comparison; at
+  least 32 characters. Additional role-bearing keys can be configured under
+  `orchestrator.security.api-keys`.
+- **Authorization**: the bootstrap key carries `USER`, `APPROVER`, and `ADMIN`.
+  `@EnableMethodSecurity` is active, so `@PreAuthorize` checks are enforced:
+  task/artifact routes require `USER`, approvals require `APPROVER`, and
+  administrative routes require `ADMIN`.
+- **Identity**: task requester and approver identity come from the
+  authenticated principal; request-body identity fields are ignored.
+- **Route coverage**: a catch-all filter chain authenticates every path except
+  the explicit public set (`/api/version`, `/actuator/health/**`,
+  `/actuator/info/**`).
+- **Client IP**: forwarding headers are ignored unless
+  `orchestrator.security.trust-forwarded-headers=true`. When enabled, the
+  right-most `X-Forwarded-For` hop is used, because the left-most value is
+  client-controlled.
+- **Workspace confinement**: `rootPath` must be an absolute canonical directory
+  below `orchestrator.workspace.allowed-roots`; API responses expose
+  workspace-relative paths rather than absolute host paths.
 - **Generated projects**: stateless JWT authentication with `JWT_SECRET` of at
   least 32 bytes.
-- **Authorization**: role checks on protected server endpoints.
 - **Input validation**: Jakarta Bean Validation plus request size limits.
 - **Audit**: JSON lines written to `orchestrator-audit.log`.
 
@@ -78,12 +97,21 @@ SpotBugs, with OWASP Dependency-Check behind an optional `NVD_API_KEY` gate.
 
 ```yaml
 orchestrator:
+  workspace:
+    allowed-roots: ["/srv/orchestrator/workspaces"]
   sandbox:
-    enableNetwork: false
-    allowedRegistries: ["docker.io", "ghcr.io"]
-    deniedImagePatterns: ["*:latest", "malicious/*"]
-    cleanupSharedVolumes: false
+    docker-image: orchestrator/sandbox:1.0.0
+    workspace-roots: ["/srv/orchestrator/workspaces"]
+    enable-network: false
+    allowed-registries: ["docker.io", "ghcr.io"]
+    denied-image-patterns: ["*:latest", "malicious/*"]
+    cleanup-shared-volumes: false
 ```
+
+`orchestrator.workspace.allowed-roots` and
+`orchestrator.sandbox.workspace-roots` should point at the same directories so
+project registration and sandbox mounting agree. Keeping the allow-list empty
+disables project registration rather than accepting arbitrary host paths.
 
 ## Security operations
 
@@ -114,4 +142,4 @@ There is no paid SLA or bug bounty.
 
 ---
 
-*Last reviewed: 2026-11-03*
+*Last reviewed: 2026-11-06*

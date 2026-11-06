@@ -32,13 +32,30 @@ available.
 
 ### Server
 
-- **Authentication**: shared API key via `Authorization: Bearer <key>` or
-  `X-API-Key`; constant-time comparison; minimum 32 characters; no fallback key.
+- **Authentication**: shared bootstrap API key via `Authorization: Bearer <key>`
+  or `X-API-Key`; constant-time comparison; minimum 32 characters; no fallback
+  key. Additional keys can be configured under `orchestrator.security.api-keys`
+  with a narrower role set.
+- **Authorization**: the bootstrap key carries `USER`, `APPROVER`, and `ADMIN`.
+  Method security is enabled, so `@PreAuthorize` is enforced. Approvals require
+  `APPROVER`; administration endpoints require `ADMIN`.
+- **Identity**: task requesters and approval decisions are attributed to the
+  authenticated principal. Caller-supplied requester/approver fields are
+  ignored.
+- **Route coverage**: a catch-all filter chain authenticates every route except
+  the explicit public set (`/api/version`, health, and info).
+- **Client IP**: `X-Forwarded-For` / `X-Real-IP` are honoured only when
+  `orchestrator.security.trust-forwarded-headers` is enabled. Leave it off
+  unless the server sits behind a proxy you control.
 - **Transport**: HTTPS with mTLS; the server requires a client certificate.
-- **Rate limiting**: Resilience4j per-endpoint limits.
+- **Rate limiting**: Resilience4j per-endpoint limits plus failed-auth
+  throttling per client IP.
 - **Audit log**: JSON lines in `orchestrator-audit.log`.
 - **Input validation**: Jakarta Bean Validation and request size limits.
 - **Prompt sanitization**: pattern-based removal of prompt-injection attempts.
+- **Workspace confinement**: a project's `rootPath` must be an absolute,
+  canonical directory below `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS`. API
+  responses report workspace-relative paths instead of host paths.
 
 ### Generated projects
 
@@ -51,20 +68,30 @@ available.
 
 ### Sandbox and verification
 
-- Docker sandbox drops all capabilities, uses a read-only rootfs, runs as
-  uid/gid `1000:1000`, and disables networking by default.
+- Build, test, and scanner tools run inside a Docker sandbox; they do not
+  execute target commands on the server host.
+- The sandbox drops all capabilities, uses a read-only rootfs, runs as uid/gid
+  `1000:1000`, and disables networking by default.
 - Resource limits: 2 GB memory, 2 CPUs, 100 processes, bounded timeouts.
+- Workspaces must live below `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS`, the same
+  allow-list as project registration.
+- The sandbox **fails closed**. If the Docker daemon is unreachable, sandbox
+  operations return an error; they do not fall back to host execution. The
+  Compose stack intentionally does not mount the Docker socket, so builds and
+  scans are unavailable there until a sandbox-capable daemon is provided.
 - `engine-verify` scanners include compile, tests, coverage, SpotBugs,
-  Checkstyle, Semgrep, OWASP Dependency-Check, Trivy, and secrets.
-- The compose stack does **not** mount the Docker socket, so sandboxing is
-  degraded there. Server tools such as `runMavenBuild` execute on the host; do
-  not expose the server to untrusted users.
+  Checkstyle, Semgrep, OWASP Dependency-Check, Trivy, and secrets. Container
+  image scans export the image to a tar and scan it inside the sandbox rather
+  than exposing the Docker socket to a container.
 
 ### Supply chain
 
 - Sandbox image registry allow/deny rules and explicit-tag requirements.
 - Gitleaks secret scanning in root CI.
 - Release assets include a SHA-256 checksum that `install.sh` verifies.
+- `companion self-update` requires a published checksum (`<jar>.sha256`,
+  `checksums.txt`, or `SHA256SUMS`) and refuses to install a release without
+  one.
 
 ## User guidance
 
@@ -99,4 +126,4 @@ must perform your own assessment.
 
 ---
 
-*Last updated: 2026-11-03*
+*Last updated: 2026-11-06*

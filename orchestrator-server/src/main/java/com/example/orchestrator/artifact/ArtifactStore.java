@@ -62,28 +62,58 @@ public class ArtifactStore {
 
     public String storeArtifactBytes(String taskId, String name, byte[] content, String contentType) throws IOException {
         String artifactId = UUID.randomUUID().toString().substring(0, 8);
-        String fileName = artifactId + "-" + name;
-        Path filePath = artifactsRoot.resolve(taskId).resolve(fileName);
-        
+        String safeTaskId = sanitizePathSegment(taskId, "task");
+        String safeName = sanitizeFileName(name);
+        String fileName = artifactId + "-" + safeName;
+        Path filePath = artifactsRoot.resolve(safeTaskId).resolve(fileName).normalize();
+        if (!filePath.startsWith(artifactsRoot)) {
+            throw new IOException("Artifact path escaped the artifact root");
+        }
+
         Files.createDirectories(filePath.getParent());
         Files.write(filePath, content);
         
         String checksum = computeChecksum(content);
-        
+
+        // Persist a path relative to the artifact root; absolute host paths are
+        // never exposed through the API or stored in metadata.
+        String relativePath = artifactsRoot.relativize(filePath).toString().replace('\\', '/');
+
         ArtifactRecord record = new ArtifactRecord(
             artifactId,
-            taskId,
-            name,
+            safeTaskId,
+            safeName,
             fileName,
             contentType,
             content.length,
-            filePath.toString(),
+            relativePath,
             Instant.now(),
             checksum
         );
         
         records.put(artifactId, record);
         return artifactId;
+    }
+
+    private static String sanitizePathSegment(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String sanitized = value.replaceAll("[^A-Za-z0-9._-]", "_");
+        return sanitized.isBlank() ? fallback : sanitized;
+    }
+
+    private static String sanitizeFileName(String name) {
+        if (name == null || name.isBlank()) {
+            return "artifact";
+        }
+        String baseName = Path.of(name).getFileName() == null
+            ? "artifact"
+            : Path.of(name).getFileName().toString();
+        String sanitized = baseName.replaceAll("[^A-Za-z0-9._-]", "_");
+        return sanitized.isBlank() || sanitized.equals(".") || sanitized.equals("..")
+            ? "artifact"
+            : sanitized;
     }
 
     public ArtifactRecord getArtifact(String artifactId) {
@@ -101,7 +131,11 @@ public class ArtifactStore {
         if (record == null) {
             return null;
         }
-        byte[] content = Files.readAllBytes(Path.of(record.path()));
+        Path artifactPath = artifactsRoot.resolve(record.path()).normalize();
+        if (!artifactPath.startsWith(artifactsRoot)) {
+            throw new IOException("Artifact path escaped the artifact root");
+        }
+        byte[] content = Files.readAllBytes(artifactPath);
         
         // H-16: Verify checksum on read
         String computedChecksum = computeChecksum(content);

@@ -215,6 +215,12 @@ companion task artifacts TASK-ABC123
 > No release has been published yet, so this command cannot upgrade the CLI
 > today. Rebuild from source until a release is announced.
 
+`self-update` requires the release to publish a SHA-256 checksum, either as
+`<jar>.sha256`, `checksums.txt`, or `SHA256SUMS`. If no valid checksum is
+available, or the downloaded jar does not match, the command exits with status
+`1` and leaves the installed binary untouched. A `--dry-run` also fails when the
+checksum is missing.
+
 ```bash
 companion self-update [options]
 ```

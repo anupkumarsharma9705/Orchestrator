@@ -165,6 +165,15 @@ public class ApprovalService {
         return entity.isPresent() && entity.get().getStatus() == ApprovalDecision.Status.PENDING;
     }
 
+    /**
+     * A task is awaiting a decision when the execution thread is blocked on its
+     * approval lock. Unlike {@link #isPending(String)} this also covers the
+     * window before the first approval row is persisted.
+     */
+    public boolean isAwaitingDecision(String taskId) {
+        return taskId != null && waitingLocks.containsKey(taskId);
+    }
+
     private ApprovalDecision toDecision(ApprovalEntity entity) {
         return new ApprovalDecision(
                 entity.getTaskId(),

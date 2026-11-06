@@ -24,6 +24,13 @@ orchestrator:
   cli:
     enabled: false
   api-key: test-api-key-for-tests-only-0123456789abcdef
+  workspace:
+    allowed-roots: ${java.io.tmpdir}/orchestrator-test-workspaces
+  sandbox:
+    workspace-roots: ${java.io.tmpdir}/orchestrator-test-workspaces
+    enable-network: false
+  security:
+    trust-forwarded-headers: false
   model-router:
     default-provider: test
     timeout-seconds: 60

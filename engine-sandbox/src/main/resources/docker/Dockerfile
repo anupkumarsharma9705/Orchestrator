@@ -10,8 +10,9 @@ RUN apk add --no-cache \
     curl \
     git \
     openssh-client \
-    docker-cli \
-    docker-cli-compose \
+    python3 \
+    py3-pip \
+    unzip \
     && rm -rf /var/cache/apk/*
 
 # Install Maven
@@ -54,13 +55,12 @@ RUN curl -fsSL https://github.com/checkstyle/checkstyle/releases/download/checks
 
 # Create non-root user
 RUN addgroup -g 1000 -S appgroup && \
-    adduser -u 1000 -S appuser -G appgroup -h /home/appuser -s /bin/bash
+    adduser -u 1000 -S sandbox -G appgroup -h /home/sandbox -s /bin/bash
 
-# Create workspace directory
-RUN mkdir -p /workspace && chown -R 1000:1000 /workspace
-
-# Create Maven cache directory
-RUN mkdir -p /root/.m2 && chown -R 1000:1000 /root/.m2
+# Create workspace and Maven cache directories owned by the sandbox user.
+# The Maven cache volume is mounted at /home/sandbox/.m2 by SandboxService.
+RUN mkdir -p /workspace /home/sandbox/.m2 && \
+    chown -R 1000:1000 /workspace /home/sandbox
 
 # Switch to non-root user
 USER 1000:1000

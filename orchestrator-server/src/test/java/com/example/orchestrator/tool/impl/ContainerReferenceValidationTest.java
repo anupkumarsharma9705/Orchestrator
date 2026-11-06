@@ -1,6 +1,7 @@
 package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,7 @@ class ContainerReferenceValidationTest {
 
     @Test
     void dockerImageScanRejectsOptionLikeReferences() {
-        DockerImageScanTool tool = new DockerImageScanTool(new ObjectMapper());
+        DockerImageScanTool tool = new DockerImageScanTool(new ObjectMapper(), org.mockito.Mockito.mock(SandboxService.class));
 
         ToolResult result = tool.execute(project(), "{\"image\": \"--output=/tmp/report\"}");
 
@@ -37,7 +38,7 @@ class ContainerReferenceValidationTest {
 
     @Test
     void dockerImageScanRejectsShellMetacharacters() {
-        DockerImageScanTool tool = new DockerImageScanTool(new ObjectMapper());
+        DockerImageScanTool tool = new DockerImageScanTool(new ObjectMapper(), org.mockito.Mockito.mock(SandboxService.class));
 
         ToolResult result = tool.execute(project(), "{\"image\": \"alpine;curl evil\"}");
 
@@ -47,7 +48,7 @@ class ContainerReferenceValidationTest {
 
     @Test
     void trivyScanRejectsOptionLikeTargets() {
-        TrivyScanTool tool = new TrivyScanTool(new ObjectMapper());
+        TrivyScanTool tool = new TrivyScanTool(new ObjectMapper(), org.mockito.Mockito.mock(SandboxService.class));
 
         ToolResult result = tool.execute(project(), "{\"target\": \"--config=/tmp/evil.yaml\"}");
 

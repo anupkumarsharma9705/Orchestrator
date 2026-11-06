@@ -16,6 +16,8 @@ title: Architecture - Deployment
 | PostgreSQL 16+ | Jobs, rounds, findings, costs | Required; H2 is not supported |
 | TLS key store + trust store | HTTPS and mTLS | The server refuses insecure defaults |
 | `ORCHESTRATOR_API_KEY` | REST API authentication | At least 32 characters |
+| Workspace roots | Project registration and sandbox mounts | Usually `~/.orchestrator/workspaces`; must already exist |
+| Docker daemon | Build, test, and scanner sandbox | Sandbox fails closed when unreachable |
 | Model provider key | Online generation | NVIDIA is the default |
 
 The server also writes audit events to `orchestrator-audit.log` in its working
@@ -50,7 +52,10 @@ database with `SPRING_DATASOURCE_URL`.
 
 The repository `docker-compose.yml` is a single-node development stack. It runs
 PostgreSQL and the server with mTLS, and it intentionally does **not** mount the
-Docker socket, so the sandbox starts degraded.
+Docker socket. Because the sandbox fails closed, build, test, and scanner tools
+return an error in this stack instead of running on the server host. Provide a
+sandbox-capable Docker daemon (or run those operations elsewhere) if you need
+them.
 
 ```bash
 cp .env.example .env
@@ -59,8 +64,8 @@ cp .env.example .env
 .\scripts\dev-up.ps1       # Windows PowerShell
 ```
 
-Do not expose this stack to untrusted users: server tools such as
-`runMavenBuild` execute on the server host.
+Do not expose this stack to untrusted users. Register a project only under the
+configured workspace allow-list.
 
 ## Configuration
 
@@ -81,6 +86,11 @@ Optional:
 
 | Variable | Description |
 |----------|-------------|
+| `ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS` | Comma-separated directories that may be registered as projects (default `~/.orchestrator/workspaces`) |
+| `ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS` | Comma-separated directories that may be mounted into the sandbox; keep aligned with the workspace allow-list |
+| `ORCHESTRATOR_SANDBOX_IMAGE` | Sandbox image (default `orchestrator/sandbox:1.0.0`) |
+| `ORCHESTRATOR_SANDBOX_ENABLE_NETWORK` | Allow container networking (default `false`) |
+| `ORCHESTRATOR_TRUST_FORWARDED_HEADERS` | Trust `X-Forwarded-For` / `X-Real-IP`; enable only behind a proxy you control (default `false`) |
 | `NVIDIA_API_KEY` | Default model provider |
 | `OPENROUTER_API_KEY` | OpenRouter key; also set `ORCHESTRATOR_MODEL_ROUTER_PROVIDERS_OPENROUTER_ENABLED=true` |
 | `ORCHESTRATOR_PORT` | Host port for Compose (default `8443`) |
@@ -88,6 +98,21 @@ Optional:
 
 The server starts without provider keys. Generation requests then fail with
 `No available providers`.
+
+To give different clients narrower permissions, configure additional keys
+under `orchestrator.security.api-keys` instead of sharing the bootstrap key:
+
+```yaml
+orchestrator:
+  security:
+    api-keys:
+      - key: ${CI_API_KEY}
+        subject: ci
+        roles: [USER]
+      - key: ${RELEASE_APPROVER_KEY}
+        subject: release-approver
+        roles: [USER, APPROVER]
+```
 
 ## Health and metrics
 
@@ -126,10 +151,10 @@ on them for retention or investigations.
 ## High availability and scaling
 
 There is no tested multi-node deployment. The server keeps audit events in a
-local file and runs build tools on its own host, so running replicas does not
-give you a shared audit trail or isolation. Treat the current server as a
-single trusted-operator service, and design a queue/worker split before scaling
-out.
+local file and relies on a Docker sandbox for build/test/scanner execution, so
+running replicas does not give you a shared audit trail or a shared sandbox
+namespace. Treat the current server as a single trusted-operator service, and
+design a queue/worker split before scaling out.
 
 ## Rollback
 

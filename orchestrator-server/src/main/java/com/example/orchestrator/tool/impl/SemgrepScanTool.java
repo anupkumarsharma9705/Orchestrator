@@ -1,28 +1,30 @@
 package com.example.orchestrator.tool.impl;
 
 import com.example.orchestrator.project.Project;
+import com.example.orchestrator.sandbox.SandboxResult;
+import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 @Component
 public class SemgrepScanTool implements Tool {
 
     private final ObjectMapper objectMapper;
+    private final SandboxService sandboxService;
     private static final Pattern SAFE_CONFIG_PATTERN = Pattern.compile("^[a-zA-Z0-9][a-zA-Z0-9._/-]*$");
 
-    public SemgrepScanTool(ObjectMapper objectMapper) {
+    public SemgrepScanTool(ObjectMapper objectMapper, SandboxService sandboxService) {
         this.objectMapper = objectMapper;
+        this.sandboxService = sandboxService;
     }
 
     @Override
@@ -73,54 +75,63 @@ public class SemgrepScanTool implements Tool {
         long start = System.currentTimeMillis();
         try {
             SemgrepScanInput params = objectMapper.readValue(input, SemgrepScanInput.class);
-            
+
             Path basePath = project.rootPath().toAbsolutePath().normalize();
             Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-            
+
             if (!targetPath.startsWith(basePath)) {
                 return ToolResult.failure("semgrepScan", "Path traversal attempt denied", System.currentTimeMillis() - start);
             }
-            
+
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("semgrepScan", "Path not found: " + params.path, System.currentTimeMillis() - start);
             }
-            
+
             String config = params.config != null ? params.config : "auto";
             if (!SAFE_CONFIG_PATTERN.matcher(config).matches()) {
                 return ToolResult.failure("semgrepScan", "Invalid config (only alphanumeric, ., _, /, - allowed): " + config, System.currentTimeMillis() - start);
             }
             int timeout = params.timeoutSeconds != null ? params.timeoutSeconds : 120;
-            
+
+            // Run inside the sandbox image. The workspace is mounted read-write;
+            // Semgrep never executes on the server host.
             List<String> command = new ArrayList<>();
             command.add("semgrep");
             command.add("--config=" + config);
             command.add("--json");
-            command.add(targetPath.toString());
-            
-            ProcessBuilder pb = new ProcessBuilder(command);
-            pb.directory(targetPath.toFile());
-            pb.redirectErrorStream(true);
-            
-            Process process = pb.start();
-            String stdout = new String(process.getInputStream().readAllBytes());
-            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-            
-            int exitCode = finished ? process.exitValue() : -1;
-            
+
+            String relativePath = basePath.relativize(targetPath).toString();
+            String workingDirectory;
+            String scanTarget;
+            if (Files.isDirectory(targetPath)) {
+                workingDirectory = relativePath;
+                scanTarget = ".";
+            } else {
+                workingDirectory = ".";
+                scanTarget = relativePath;
+            }
+            command.add(scanTarget);
+
+            SandboxResult sandboxResult = sandboxService.run(
+                command, basePath, workingDirectory, timeout);
+            String stdout = sandboxResult.stdout();
+            int exitCode = sandboxResult.exitCode();
+
             // Parse JSON output for findings
             List<Finding> findings = parseFindings(stdout);
-            
-            SemgrepScanOutput output = new SemgrepScanOutput(exitCode, stdout, exitCode == 0, findings);
+
+            SemgrepScanOutput output = new SemgrepScanOutput(
+                exitCode, stdout + sandboxResult.stderr(), exitCode == 0, findings);
             String result = objectMapper.writeValueAsString(output);
-            
-            // Semgrep returns non-zero exit code when findings are found, but that's not a tool failure
-            // Tool failure is when semgrep itself fails to run
-            boolean toolSuccess = finished && (exitCode == 0 || exitCode == 1);
-            
-            return toolSuccess 
+
+            // Semgrep returns non-zero exit code when findings are found, but that's not a tool failure.
+            // Tool failure is when semgrep itself fails to run.
+            boolean toolSuccess = !sandboxResult.timedOut() && (exitCode == 0 || exitCode == 1);
+
+            return toolSuccess
                 ? ToolResult.success("semgrepScan", result, System.currentTimeMillis() - start)
-                : ToolResult.failure("semgrepScan", "Semgrep failed to execute: " + stdout, System.currentTimeMillis() - start);
-            
+                : ToolResult.failure("semgrepScan", "Semgrep failed to execute: " + stdout + sandboxResult.stderr(), System.currentTimeMillis() - start);
+
         } catch (Exception e) {
             return ToolResult.failure("semgrepScan", e.getMessage(), System.currentTimeMillis() - start);
         }

@@ -158,6 +158,25 @@ resilience4j:
 orchestrator:
   version: ${project.version:0.0.1-SNAPSHOT}
   api-key: ${ORCHESTRATOR_API_KEY:}
+  # Directories the API may register as projects. Every rootPath is
+  # canonicalised and must live below one of these entries. Empty disables
+  # project registration entirely.
+  workspace:
+    allowed-roots: ${ORCHESTRATOR_WORKSPACE_ALLOWED_ROOTS:${user.home}/.orchestrator/workspaces}
+  # Docker sandbox used for builds, tests and scanners. No target command is
+  # ever executed on the server host.
+  sandbox:
+    docker-image: ${ORCHESTRATOR_SANDBOX_IMAGE:orchestrator/sandbox:1.0.0}
+    workspace-roots: ${ORCHESTRATOR_SANDBOX_WORKSPACE_ROOTS:${user.home}/.orchestrator/workspaces}
+    enable-network: ${ORCHESTRATOR_SANDBOX_ENABLE_NETWORK:false}
+  security:
+    # Only enable behind a reverse proxy you control. When false, client IPs
+    # come from the socket peer and forwarding headers are ignored.
+    trust-forwarded-headers: ${ORCHESTRATOR_TRUST_FORWARDED_HEADERS:false}
+    policy:
+      max-regex-time-ms: 200
+      max-input-chars: 100000
+      max-line-length: 10000
   api:
     min-compatible-client-version: "0.0.1"
     version-endpoint: "/api/version"

@@ -8,6 +8,7 @@ import com.example.orchestrator.execution.ExecutionState;
 import com.example.orchestrator.execution.ExecutionStatus;
 import com.example.orchestrator.project.Project;
 import com.example.orchestrator.project.ProjectManager;
+import com.example.orchestrator.project.WorkspaceProperties;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -17,13 +18,16 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -38,12 +42,16 @@ public class TaskController {
     private final ExecutionEngine executionEngine;
     private final ApprovalService approvalService;
     private final ArtifactStore artifactStore;
+    private final WorkspaceProperties workspaceProperties;
 
-    public TaskController(ProjectManager projectManager, ExecutionEngine executionEngine, ApprovalService approvalService, ArtifactStore artifactStore) {
+    public TaskController(ProjectManager projectManager, ExecutionEngine executionEngine,
+                          ApprovalService approvalService, ArtifactStore artifactStore,
+                          WorkspaceProperties workspaceProperties) {
         this.projectManager = projectManager;
         this.executionEngine = executionEngine;
         this.approvalService = approvalService;
         this.artifactStore = artifactStore;
+        this.workspaceProperties = workspaceProperties;
     }
 
     @PostMapping("/projects")
@@ -59,6 +67,9 @@ public class TaskController {
     public ResponseEntity<ProjectResponse> registerProject(
             @Parameter(description = "Project registration request", required = true)
             @RequestBody ProjectRequest request) {
+        if (request.rootPath() == null || request.rootPath().isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
         Project project = projectManager.register(
             request.id(),
             request.name(),
@@ -108,8 +119,14 @@ public class TaskController {
     })
     public ResponseEntity<TaskResponse> submitTask(
             @Parameter(description = "Task creation request", required = true)
-            @RequestBody CreateTaskRequest request) {
-        String taskId = executionEngine.submitTask(request.projectId(), request.request(), request.requester());
+            @RequestBody CreateTaskRequest request,
+            Authentication authentication) {
+        // Never trust a caller-supplied requester: attribute the task to the
+        // authenticated principal.
+        String requester = authentication != null && authentication.getName() != null
+            ? authentication.getName()
+            : request.requester();
+        String taskId = executionEngine.submitTask(request.projectId(), request.request(), requester);
         ExecutionState state = executionEngine.getState(taskId);
         
         return ResponseEntity.ok(toResponse(state));
@@ -136,34 +153,71 @@ public class TaskController {
 
     @PostMapping("/tasks/{id}/approve")
     @PreAuthorize("hasRole('APPROVER')")
-    public ResponseEntity<Void> approveTask(@PathVariable String id, @RequestBody ApprovalRequest request) {
+    public ResponseEntity<Void> approveTask(@PathVariable String id,
+                                            @RequestBody(required = false) ApprovalRequest request,
+                                            Authentication authentication) {
+        if (!approvalService.isAwaitingDecision(id)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String decisionValue = request == null ? "APPROVED" : request.decision();
+        String comment = request == null ? null : request.comment();
+        String approver = approverIdentity(authentication);
+
         ApprovalDecision decision;
-        if ("APPROVED".equalsIgnoreCase(request.decision())) {
-            decision = ApprovalDecision.approved(id, request.approver(), request.comment());
-        } else if ("REJECTED".equalsIgnoreCase(request.decision())) {
-            decision = ApprovalDecision.rejected(id, request.approver(), request.comment());
+        if (decisionValue == null || "APPROVED".equalsIgnoreCase(decisionValue)) {
+            decision = ApprovalDecision.approved(id, approver, comment);
+        } else if ("REJECTED".equalsIgnoreCase(decisionValue)) {
+            decision = ApprovalDecision.rejected(id, approver, comment);
         } else {
             return ResponseEntity.badRequest().build();
         }
-        
-        approvalService.submitApproval(decision);
-        return ResponseEntity.ok().build();
+
+        return submitDecision(decision);
     }
 
     @PostMapping("/tasks/{id}/reject")
     @PreAuthorize("hasRole('APPROVER')")
-    public ResponseEntity<Void> rejectTask(@PathVariable String id, @RequestBody ApprovalRequest request) {
-        ApprovalDecision decision = ApprovalDecision.rejected(id, request.approver(), request.comment());
-        approvalService.submitApproval(decision);
-        return ResponseEntity.ok().build();
+    public ResponseEntity<Void> rejectTask(@PathVariable String id,
+                                           @RequestBody(required = false) ApprovalRequest request,
+                                           Authentication authentication) {
+        if (!approvalService.isAwaitingDecision(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        ApprovalDecision decision = ApprovalDecision.rejected(
+            id, approverIdentity(authentication), request == null ? null : request.comment());
+        return submitDecision(decision);
+    }
+
+    private ResponseEntity<Void> submitDecision(ApprovalDecision decision) {
+        try {
+            approvalService.submitApproval(decision);
+            return ResponseEntity.ok().build();
+        } catch (IllegalStateException e) {
+            // The task moved on between the check and the write.
+            return ResponseEntity.status(409).build();
+        }
+    }
+
+    /**
+     * The approver is always the authenticated principal. Request-body fields
+     * describing the approver are deliberately ignored so a caller cannot
+     * attribute a decision to somebody else.
+     */
+    private String approverIdentity(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null
+                || authentication.getName().isBlank()) {
+            return "unknown";
+        }
+        return authentication.getName();
     }
 
     private ProjectResponse toResponse(Project project) {
         return new ProjectResponse(
             project.id(),
             project.name(),
-            project.rootPath().toString(),
-            project.memoryPath().toString(),
+            workspaceProperties.toRelativeDisplayPath(project.rootPath()),
+            workspaceProperties.toRelativeDisplayPath(project.memoryPath()),
             project.buildTool(),
             project.testCommand(),
             project.registeredAt(),
@@ -219,16 +273,37 @@ public class TaskController {
             byte[] content = artifactStore.readArtifactBytes(artifact.artifactId());
             
             ByteArrayResource resource = new ByteArrayResource(content);
-            
+
+            String downloadName = sanitizeDownloadName(artifact.name());
+            ContentDisposition disposition = ContentDisposition.attachment()
+                .filename(downloadName, StandardCharsets.UTF_8)
+                .build();
+
             return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(artifact.contentType()))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + artifact.name() + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
                 .header("X-Artifact-Checksum", artifact.checksum())
+                .header("X-Content-Type-Options", "nosniff")
                 .contentLength(artifact.sizeBytes())
                 .body(resource);
         } catch (IOException e) {
             return ResponseEntity.internalServerError().build();
         }
+    }
+
+    private String sanitizeDownloadName(String name) {
+        if (name == null || name.isBlank()) {
+            return "artifact";
+        }
+        String baseName;
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(name).getFileName();
+            baseName = path == null ? "artifact" : path.toString();
+        } catch (RuntimeException e) {
+            baseName = "artifact";
+        }
+        String sanitized = baseName.replaceAll("[^A-Za-z0-9._-]", "_");
+        return sanitized.isBlank() ? "artifact" : sanitized;
     }
 
     private record ArtifactResponse(
