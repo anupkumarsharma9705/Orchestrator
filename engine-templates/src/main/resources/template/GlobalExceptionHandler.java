@@ -14,6 +14,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Instant;
@@ -175,6 +176,17 @@ public class GlobalExceptionHandler {
             null,
             request.getRequestURI()
         );
+    }
+
+    /**
+     * Handles a client that disconnected before the response was written, for example
+     * when curl is interrupted from the console. This is not a server error and the
+     * response may already be committed, so it is only logged at debug level.
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException ex) {
+        LOG.debug("Client disconnected before the response completed: {}",
+            sanitize(ex.getMessage()));
     }
 
     /**

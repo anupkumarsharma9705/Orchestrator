@@ -5,7 +5,7 @@
 ## Tech Stack
 
 - **Java**: 21 LTS
-- **Spring Boot**: 3.4.x
+- **Spring Boot**: {{spring.boot.version}}
 - **Database**: PostgreSQL 16 (Flyway for migrations)
 - **Security**: JWT (JJWT), BCrypt
 - **Build**: Maven 3.9+

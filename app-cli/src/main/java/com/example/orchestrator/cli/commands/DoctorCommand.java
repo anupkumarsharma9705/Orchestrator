@@ -17,6 +17,7 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -65,10 +66,10 @@ public class DoctorCommand implements Callable<Integer> {
         checkMaven(results);
         checkDocker(results);
         checkGit(results);
-        checkOrchestratorServer(results, config);
+        boolean orchestratorHealthy = checkOrchestratorServer(results, config);
         checkWorkspace(results);
         checkDiskSpace(results);
-        checkPort(results);
+        checkPort(results, config, orchestratorHealthy);
         checkMemory(results);
 
         // Display results
@@ -183,15 +184,17 @@ public class DoctorCommand implements Callable<Integer> {
         }
     }
 
-    private void checkOrchestratorServer(DoctorResults results, CliConfig config) {
+    private boolean checkOrchestratorServer(DoctorResults results, CliConfig config) {
         try {
             OrchestratorClient client = new OrchestratorClient(config);
             OrchestratorClient.HealthResponse health = client.healthCheck().block();
             
             if (health != null && "UP".equalsIgnoreCase(health.status())) {
                 results.addCheck("Orchestrator Server", true, "Server reachable at " + config.serverUrl(), "OK");
+                return true;
             } else {
                 results.addCheck("Orchestrator Server", false, "Server at " + config.serverUrl() + " is not healthy", "Start orchestrator server");
+                return false;
             }
         } catch (Exception e) {
             String cause = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -199,6 +202,7 @@ public class DoctorCommand implements Callable<Integer> {
                     "Cannot connect to " + config.serverUrl() + ": " + cause,
                     "Start orchestrator server at " + config.serverUrl()
                             + " or run scripts/dev-up");
+            return false;
         }
     }
 
@@ -233,13 +237,43 @@ public class DoctorCommand implements Callable<Integer> {
         }
     }
 
-    private void checkPort(DoctorResults results) {
+    private void checkPort(DoctorResults results, CliConfig config, boolean orchestratorHealthy) {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress("localhost", 8443), 1000);
-            results.addCheck("Port 8443 free", false, "Port 8443 is already in use", "Stop process using port 8443 or configure different port");
+
+            if (orchestratorHealthy && isLocalOrchestratorEndpoint(config)) {
+                // The port is in use because our own orchestrator server is listening on it.
+                results.addCheck("Port 8443", true,
+                        "Port 8443 is used by the running orchestrator server", "OK");
+            } else {
+                results.addCheck("Port 8443", false,
+                        "Port 8443 is already in use by another process",
+                        "Stop the process using port 8443 or configure a different port");
+            }
         } catch (Exception e) {
             // Connection failed = port is free
-            results.addCheck("Port 8443 free", true, "Port 8443 is available", "OK");
+            results.addCheck("Port 8443", true, "Port 8443 is available", "OK");
+        }
+    }
+
+    /**
+     * Returns true when the configured server URL points at this machine's default
+     * orchestrator port, so an occupied port 8443 is expected rather than a problem.
+     */
+    static boolean isLocalOrchestratorEndpoint(CliConfig config) {
+        try {
+            URI uri = URI.create(config.serverUrl());
+            String host = uri.getHost();
+            if (host == null) {
+                return false;
+            }
+            boolean localHost = "localhost".equalsIgnoreCase(host)
+                    || "127.0.0.1".equals(host)
+                    || "::1".equals(host)
+                    || "[::1]".equals(host);
+            return localHost && uri.getPort() == 8443;
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

@@ -31,6 +31,7 @@ public class TemplateEngine {
     private static final Logger log = LoggerFactory.getLogger(TemplateEngine.class);
 
     private static final String TEMPLATE_BASE = "template/";
+    private static final String SPRING_BOOT_VERSION = "4.1.1";
     private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\{\\{(.+?)\\}\\}");
 
     private final Map<String, String> templateCache = new HashMap<>();
@@ -137,7 +138,7 @@ public class TemplateEngine {
         Map<String, String> vars = createCommonVariables(project);
         vars.put("project.description", "Spring Boot REST API for " + project.name());
         vars.put("java.version", "21");
-        vars.put("spring.boot.version", "4.1.1");
+        vars.put("spring.boot.version", SPRING_BOOT_VERSION);
         vars.put("maven.compiler.source", "21");
         vars.put("maven.compiler.target", "21");
 
@@ -369,6 +370,7 @@ public class TemplateEngine {
         vars.put("serviceName", project.name().toLowerCase());
         vars.put("groupId", "com.example");
         vars.put("version", "0.0.1-SNAPSHOT");
+        vars.put("spring.boot.version", SPRING_BOOT_VERSION);
         vars.put("year", String.valueOf(java.time.Year.now().getValue()));
         return vars;
     }

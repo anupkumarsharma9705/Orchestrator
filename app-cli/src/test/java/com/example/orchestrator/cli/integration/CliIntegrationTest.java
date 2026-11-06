@@ -13,7 +13,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Bean;
@@ -43,9 +42,6 @@ class CliIntegrationTest {
 
     private CommandLine commandLine;
 
-    @Autowired
-    private ConfigManager configManager;
-
     @MockitoBean
     private TemplateEngine templateEngine;
 
@@ -65,7 +61,10 @@ class CliIntegrationTest {
         System.setProperty("user.home", tempDir.toString());
         this.commandLine = new CommandLine(new CompanionCli());
         CliConfig config = CliConfig.defaults();
-        configManager.save(config);
+        // Build the manager against the temporary home explicitly. The Spring-managed
+        // bean resolves user.home at context startup, which can be the developer's
+        // real home directory and would overwrite their real config.
+        new ConfigManager(tempDir.resolve(".companion").resolve("config.yaml")).save(config);
 
         System.setOut(new PrintStream(outputStream));
         System.setErr(new PrintStream(errorStream));
