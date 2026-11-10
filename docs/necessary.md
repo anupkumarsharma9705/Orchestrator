@@ -297,10 +297,10 @@ scope-limited; **Missing** — not implemented.
 | Build-system and version detection (Maven/Gradle, multi-module, JDK, Boot 2/3, `javax`/`jakarta`) | Partial | Maven/Spring Boot oriented; Gradle is accepted in requests but not implemented end to end |
 | Match existing project conventions | Partial | Template-level conventions exist; no analysis of an existing codebase |
 | Legacy and enterprise support (old Java, XML config, monoliths) | Missing | Targets modern Spring Boot generation |
-| Production-quality generated code (records, constructor injection, layering, validation, exception handling) | Implemented | Secure Spring Boot templates and generated-project checks |
-| Database awareness (migrations, N+1, indexes, transactions, locking) | Partial | Flyway is included; N+1 detection and optimistic locking are not |
+| Production-quality generated code (records, constructor injection, layering, validation, exception handling) | Partial | The generator emits a Spring Boot scaffold (build file, application class, security filter, exception handler, Docker/CI assets). Domain entities, controllers, services, repositories, migrations, and tests are not generated. |
+| Database awareness (migrations, N+1, indexes, transactions, locking) | Partial | Flyway is configured in the scaffold, but no migrations are generated; N+1 detection and optimistic locking are not implemented |
 | Concurrency correctness guidance | Missing | No dedicated handling for `@Transactional` pitfalls, async, or reactive correctness |
-| Secure-by-default generated code | Implemented | JWT security, authorization, parameterized queries, sandboxing |
+| Secure-by-default generated code | Partial | The scaffold requires `JWT_SECRET` and `DB_PASSWORD`, binds PostgreSQL to loopback, and does not leave auth paths open. It includes a bearer-token validation filter but no login endpoint, token issuance, refresh flow, user store, rate limiting, or authorization rules. Platform-side sandboxing is separate from the generated code. |
 | Observability in generated projects | Partial | Actuator/OpenTelemetry exist in the platform; generated templates are not complete |
 | Behavior-focused tests (JUnit 5, Mockito, Testcontainers, contract tests) | Partial | JUnit 5 and Mockito are present; Testcontainers/contract-test coverage is incomplete |
 | Verified changes with visible results | Partial | Sandbox compile/test exists; no diff preview or one-click undo |
@@ -310,7 +310,7 @@ scope-limited; **Missing** — not implemented.
 | Pull-request code-review mode | Missing | No review mode |
 | API design (OpenAPI, versioning, compatibility) | Partial | OpenAPI generation exists; versioning and compatibility checking do not |
 | Performance analysis (JFR, GC logs, profiling) | Missing | Not implemented |
-| CI/CD assistance (Dockerfile, Helm, GitHub Actions) | Implemented | Generated templates include Docker and CI assets |
+| CI/CD assistance (Dockerfile, Helm, GitHub Actions) | Partial | Generated templates include Dockerfile, Docker Compose, and GitHub Actions; no Helm chart is generated |
 
 ### A.2 AI engineering requirements
 

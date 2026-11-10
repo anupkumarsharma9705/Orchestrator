@@ -88,7 +88,7 @@ public class RunMavenBuildTool implements Tool {
             }
 
             String relativePath = basePath.relativize(targetPath).toString();
-            SandboxResult sandboxResult = sandboxService.run(command, basePath, relativePath, timeout);
+            SandboxResult sandboxResult = sandboxService.runMaven(command, basePath, relativePath, timeout);
             String output = sandboxResult.stdout() + sandboxResult.stderr();
             int exitCode = sandboxResult.exitCode();
             boolean success = !sandboxResult.timedOut() && !sandboxResult.oomKilled() && exitCode == 0;

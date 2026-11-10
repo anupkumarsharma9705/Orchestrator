@@ -103,6 +103,26 @@ rules used by rate limiting. It now injects the shared `ClientIpResolver`, so
 audit records, API-key throttling, and endpoint limits attribute requests to the
 same client identity. The spoofable local resolver was removed.
 
+### 2.6 Release blockers R-01 to R-04
+
+These items came from the release review that followed SEC-14 to SEC-18. R-01
+and R-02 were fixed in the same pass; R-03 and R-04 were fixed in the following
+pass.
+
+| ID | Issue | Remediation | Verification |
+|---|---|---|---|
+| R-01 | Workspace tools validated paths with `normalize()` + `startsWith()`, so a symlink could escape the project root. | New `WorkspacePathGuard` resolves the nearest existing ancestor with `toRealPath()`, rejects symlink components, and every path-taking tool operates through it with `NOFOLLOW_LINKS`. Recursive walks skip symlinks, and `dockerBuild` rejects a symlinked `Dockerfile`. Applied to all 14 path-taking tools. | `WorkspacePathGuardTest`, `PathTakingToolsSymlinkTest`, `WriteFileToolTest`, `EditFileToolTest` (21 regression tests). |
+| R-02 | `writeFile` failed for genuinely new package directories because its real-path check ran before `createDirectories`, and error messages leaked absolute server paths. | Validate the nearest existing ancestor, create the missing parent directories, re-check the real path before writing, and return workspace-relative paths in errors. Write and edit failures no longer include `getMessage()` with absolute paths. | `WriteFileToolTest`, `EditFileToolTest` — nested package creation, symlink rejection, relative error text. |
+| R-03 | The generated project was a skeleton that claimed rate limiting, a login flow, and SEC-1 to SEC-10 compliance that it did not implement. It also shipped `postgres/postgres` database defaults and left `/api/auth/**` open. | The generated `SecurityConfig` now describes the scaffold accurately and removes the SEC-1 to SEC-10 claims, the `/api/auth/**` permit, and the `/api/public/**` permit. `DB_PASSWORD` is required with no default in `application.yml`, `docker-compose.yml`, and `TemplateEngine`; the Postgres port binds to `127.0.0.1`. The generated README has an explicit skeleton notice and accurate security/environment documentation. The generated CI uses clearly labelled ephemeral CI-only credentials. Offline CLI plans and output now say "scaffold" instead of claiming feature generation, and duplicate dry-run file entries were removed. The committed `library/` sample was regenerated from the templates. | `TemplateEngineTest` (9 tests) asserts no SEC claims, no open auth paths, required `DB_PASSWORD`, loopback-only Postgres, CI-only credentials, and README skeleton limitations. CLI integration tests assert the offline dry-run path. |
+| R-04 | A fresh sandbox cannot run a Maven build/test because network mode is `none` and a cold Maven cache has no dependencies. Scanner tools that fetch remote rule sets or vulnerability databases are a separate limitation (see section 4). | `SandboxService.runMaven` now runs offline first. If the failure looks like dependency/plugin resolution, it runs a separate `dependency:go-offline` + `dependency:resolve-plugins` prefetch with `bridge` networking and a **read-only** workspace mount, then retries the original command with network disabled. The prefetch is bounded by `enable-dependency-prefetch` and `dependency-prefetch-timeout-seconds` (default 900 s), and is skipped for timeouts, OOM kills, or non-dependency failures. `createContainer` now takes network and read-only flags, and `createWorkspaceBind` supports `ro`. `runMavenBuild` and `runMavenTest` use the new flow. | `SandboxServiceMavenPrefetchTest` — cold offline failure → networked read-only prefetch → offline retry, plus a negative case proving compile failures are not retried with network. `SandboxServiceTest` covers prefetch defaults, read-only binds, prefetch arguments, and dependency-failure detection. |
+
+**R-04 trust boundary.** Maven can load build extensions while resolving
+dependencies, so the prefetch phase must treat the project as trusted. The
+prefetch workspace is mounted read-only and the build/test phases remain
+offline, but `enableDependencyPrefetch` is documented as suitable only for
+trusted workspaces. Air-gapped deployments should disable it and pre-warm the
+cache.
+
 ## 3. Remediation applied in this pass
 
 - `MavenGoalValidator` plus call-site checks in `runMavenBuild` / `runMavenTest`.
@@ -131,6 +151,10 @@ same client identity. The spoofable local resolver was removed.
 - SEC-17: outbound OkHttp TLS with JVM default trust plus an optional additive private trust store; no trust-all path.
 - SEC-18: expanded database-URL secret detection and added query-parameter credential coverage.
 - Audit filter now resolves the client IP through the shared `ClientIpResolver` instead of its own left-most-hop parser.
+- R-01: shared `WorkspacePathGuard` and `NOFOLLOW_LINKS` path handling across all 14 path-taking tools; symlink-aware recursive walks and Dockerfile checks.
+- R-02: `writeFile`/`editFile` validate the nearest existing ancestor, create nested package directories, re-check the real path, and return workspace-relative error text.
+- R-03: generated scaffold no longer claims SEC-1 to SEC-10, rate limiting, or a login flow; `/api/auth/**` and `/api/public/**` are no longer permitted; `DB_PASSWORD` is required with no default; PostgreSQL binds to loopback; generated CI credentials are labelled CI-only; CLI and README describe scaffold limitations; `library/` sample regenerated.
+- R-04: `runMaven` performs an offline build/test, then a read-only `bridge`-networked `dependency:go-offline` + `dependency:resolve-plugins` prefetch, then retries offline; prefetch is configurable, bounded, and only triggers on dependency-resolution failures.
 - New/updated unit tests: `MavenGoalValidatorTest`, `ContainerReferenceValidationTest`, `ProjectManagerTest`, `SandboxServiceTest`, `SelfUpdateCommandTest`, `MtlsConfigTest`, `ClientIpResolverTest`, `TimeBoundedCharSequenceTest`, `EgressDnsResolverTest`, `EgressFilterTest`, `PromptSanitizerTest`, `SecretScannerTest`, `TerminalSupportTest`, `HttpClientConfigTest`, `FilterRegistrationTest`.
 
 Verification after remediation:
@@ -149,16 +173,20 @@ Verification after remediation:
 - Offline generated project (`companion generate --offline --non-interactive`, with `COMPANION_ASCII=1`) — `mvn -B -ntp verify` **BUILD SUCCESS**; Checkstyle 0 violations, SpotBugs 0 warnings.
 - Working-tree secret scan — no `sk-or-v1-...` value outside excluded review/library material; `git diff --check` reports no whitespace errors.
 - Aggregate CycloneDX SBOM — generated at `target/sbom.json`, schema 1.5, 222 components, including all 12 reactor modules.
+- Full reactor after R-01/R-02 (`mvn -B -ntp clean verify`) — **BUILD SUCCESS**; 307 tests, 0 failures, 1 skipped.
+- Full reactor after R-03/R-04 (`mvn -B -ntp clean verify`) — **BUILD SUCCESS**; 314 tests, 0 failures, 1 skipped (server 109, CLI 49, sandbox 42, templates 9).
+- R-04 container-phase verification is unit-level only. Docker Desktop was paused on this host, so the networked prefetch and offline retry have not been exercised against a live daemon.
 
 ## 4. Remaining production-readiness blockers
 
 1. **Sandbox image publication.** Build and publish `orchestrator/sandbox:1.0.0`; without it, sandboxed commands fail closed. The Docker engine pipe was unavailable on this host, so container-level verification is still outstanding.
 2. **Library-level host execution.** `engine-core` `Coder.compileAndVerify` still shells out to host Maven. The server execution path does not invoke `Coder`, but consumers of the engine library should sandbox it before use.
-3. **Deployment validation.** Docker Compose stack, mTLS stack, sandbox image, and a dockerized generated app remain untested. No live model-provider key has exercised online generation.
+3. **Deployment validation.** Docker Compose stack, mTLS stack, sandbox image, and a dockerized generated app remain untested. No live model-provider key has exercised online generation. The R-04 two-phase Maven prefetch is covered by mocked unit tests but has not run against a live Docker daemon; run it on a fresh host with an empty Maven cache before claiming the fresh-machine build path is verified.
 4. **Supply chain execution and publication.** SBOM generation, dependency scanning, GPG signing, and provenance attestation are configured (SEC-13) but have not run in GitHub Actions from this environment. Maven Central publication and installer publication remain manual/external steps. Release secrets required: `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`; optional but recommended: `NVD_API_KEY`.
 5. **Data durability.** In-memory cost tracking; no backup/retention automation; no queue/worker split.
 6. **Release hygiene.** Version mismatch (`0.0.1-SNAPSHOT` vs docs `0.1.0`), stale status documents (`TESTING.md`, `ALL_ISSUES_SUMMARY.md`, `CEO_REVIEW.md`, `orchestrator-server/TODO.md`). The license inconsistency is resolved (Apache-2.0 across the tree).
 7. **Credential rotation.** Rotate the OpenRouter key that appeared in `orchestrator-server/.idea/workspace.xml`. The value has been scrubbed from the working tree and is not in git history, but the exposed credential must still be revoked and reissued at the provider. A repository-wide scan now finds no `sk-or-v1-...` key.
+8. **Scanner data is still online-only.** The Maven prefetch does not warm scanner data. Semgrep `auto`/registry configs need remote rules, Trivy needs its vulnerability database, and OWASP Dependency-Check needs NVD data. The tools fail closed inside the offline sandbox rather than running on the host. Operators must pre-warm those caches or use a dedicated scanner image before relying on scans from a fresh machine. This is the remaining part of the original "build/scan" finding.
 
 ## 5. Re-running the audit
 

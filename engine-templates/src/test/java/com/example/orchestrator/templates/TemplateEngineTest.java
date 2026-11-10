@@ -169,10 +169,17 @@ class TemplateEngineTest {
         assertThat(appYml).contains("datasource:");
         assertThat(appYml).contains("jpa:");
         assertThat(appYml).contains("flyway:");
-        assertThat(appYml).contains("security:");
         assertThat(appYml).contains("jwt:");
         assertThat(appYml).contains("management:");
         assertThat(appYml).contains("logging:");
+        // DB_PASSWORD is required; the generated project must not ship a
+        // default database password.
+        assertThat(appYml).contains("password: ${DB_PASSWORD}");
+        assertThat(appYml).doesNotContain("${DB_PASSWORD:postgres}");
+        // JWT_SECRET is required too; an empty default would contradict the
+        // generated README and defer failure to token validation.
+        assertThat(appYml).contains("secret: ${JWT_SECRET}");
+        assertThat(appYml).doesNotContain("${JWT_SECRET:}");
     }
 
     @Test
@@ -203,9 +210,43 @@ class TemplateEngineTest {
         assertThat(securityConfig).contains("SessionCreationPolicy.STATELESS");
         assertThat(securityConfig).contains("JwtAuthenticationFilter");
         assertThat(securityConfig).contains("BCryptPasswordEncoder");
-        assertThat(securityConfig).contains("SEC-1:");
-        assertThat(securityConfig).contains("SEC-2:");
-        assertThat(securityConfig).contains("SEC-7:");
+        // The skeleton does not implement rate limiting or a login endpoint,
+        // so it must not claim to, and it must not leave auth paths open.
+        assertThat(securityConfig).doesNotContain("SEC-9");
+        assertThat(securityConfig).doesNotContain("Rate limiting on auth endpoints");
+        assertThat(securityConfig).doesNotContain("/api/auth/**");
+        assertThat(securityConfig).doesNotContain("/api/public/**");
+        assertThat(securityConfig).contains("No login endpoint");
+    }
+
+    @Test
+    void readme_describesSkeletonLimitations() throws Exception {
+        Project project = new Project(
+            "library",
+            "library",
+            "REST CRUD for Book",
+            "com.example.library",
+            "Library",
+            "/tmp/library",
+            "/tmp/library/.companion",
+            "MAVEN",
+            "mvn verify",
+            Map.of(),
+            Instant.now(),
+            Instant.now()
+        );
+
+        Plan plan = createSamplePlan();
+        templateEngine.generateProject(project, plan, tempDir);
+
+        String readme = java.nio.file.Files.readString(tempDir.resolve("README.md"));
+
+        assertThat(readme).contains("Generated skeleton");
+        assertThat(readme).contains("No login endpoint");
+        assertThat(readme).contains("No rate limiting is included");
+        assertThat(readme).contains("DB_PASSWORD");
+        assertThat(readme).contains("Required (no default)");
+        assertThat(readme).doesNotContain("export DB_PASSWORD=\"postgres\"");
     }
 
     @Test
@@ -265,6 +306,11 @@ class TemplateEngineTest {
         assertThat(compose).contains("healthcheck:");
         assertThat(compose).contains("pg_isready");
         assertThat(compose).contains("SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/");
+        // The database password has no default and the port is loopback-only.
+        assertThat(compose).contains("DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}");
+        assertThat(compose).contains("POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}");
+        assertThat(compose).doesNotContain("POSTGRES_PASSWORD=postgres");
+        assertThat(compose).contains("\"127.0.0.1:5432:5432\"");
     }
 
     @Test
@@ -292,6 +338,9 @@ class TemplateEngineTest {
         assertThat(ci).contains("mvn -B -ntp verify");
         assertThat(ci).contains("-Psecurity dependency-check:check");
         assertThat(ci).contains("if: env.NVD_API_KEY != ''");
+        assertThat(ci).contains("ci-only-postgres-password");
+        assertThat(ci).doesNotContain("POSTGRES_PASSWORD: postgres");
+        assertThat(ci).doesNotContain("DB_PASSWORD: postgres");
         assertThat(ci).doesNotContain("trivy-action");
         // Generated projects must not require registry credentials to build.
         assertThat(ci).doesNotContain("secrets.DOCKERHUB_USERNAME");

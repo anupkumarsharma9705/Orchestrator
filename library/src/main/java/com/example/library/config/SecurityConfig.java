@@ -20,19 +20,16 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Security configuration for JWT-based stateless authentication.
+ * Security configuration for a stateless API skeleton.
  *
- * Security Rules Enforced:
- * - SEC-1: Constructor injection only
- * - SEC-2: No SQL concatenation (parameterized only)
- * - SEC-3: BCrypt/Argon2 for passwords
- * - SEC-4: SecureRandom for tokens
- * - SEC-5: No MD5/SHA1/DES/RC4/ECB
- * - SEC-6: @Valid on @RequestBody
- * - SEC-7: No secrets in code/logs
- * - SEC-8: CORS allow-list only
- * - SEC-9: Rate limiting on auth endpoints
- * - SEC-10: Actuator health only public
+ * <p>This class configures the security filter chain and rejects unauthenticated
+ * requests. It validates bearer tokens.</p>
+ *
+ * <p>No login endpoint, user store, token issuance, refresh flow, or rate
+ * limiting is included. Add those before exposing the API, and explicitly
+ * permit the login endpoint when you add it.</p>
+ *
+ * <p>The only public endpoints here are the actuator health and info probes.</p>
  */
 @Configuration(proxyBeanMethods = false)
 @EnableWebSecurity
@@ -71,10 +68,9 @@ public final class SecurityConfig {
 
             // Authorization rules
             .authorizeHttpRequests(auth -> auth
-                // Public endpoints
+                // Public health probes only. Add a login endpoint here once the
+                // application implements token issuance.
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/api/public/**").permitAll()
 
                 // Actuator endpoints - only health/info public
                 .requestMatchers("/actuator/**").hasRole("ADMIN")

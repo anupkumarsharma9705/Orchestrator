@@ -189,6 +189,11 @@ orchestrator:
     workspace-volume: ${ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME:}
     workspace-volume-root: ${ORCHESTRATOR_SANDBOX_WORKSPACE_VOLUME_ROOT:/workspaces}
     enable-network: ${ORCHESTRATOR_SANDBOX_ENABLE_NETWORK:false}
+    # A cold Maven cache makes an offline build fail. Allow one read-only,
+    # network-enabled dependency prefetch before retrying with network disabled.
+    # Disable for air-gapped deployments with a pre-warmed cache.
+    enable-dependency-prefetch: ${ORCHESTRATOR_SANDBOX_ENABLE_DEPENDENCY_PREFETCH:true}
+    dependency-prefetch-timeout-seconds: ${ORCHESTRATOR_SANDBOX_DEPENDENCY_PREFETCH_TIMEOUT_SECONDS:900}
   security:
     # Only enable behind a reverse proxy you control. When false, client IPs
     # come from the socket peer and forwarding headers are ignored.

@@ -11,6 +11,7 @@ spring:
   datasource:
     url: {{datasource.url}}
     username: {{datasource.username}}
+    # Required - there is deliberately no default database password.
     password: {{datasource.password}}
     driver-class-name: org.postgresql.Driver
     hikari:

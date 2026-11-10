@@ -160,6 +160,20 @@ public class SandboxConfig {
     /** Enable network access for containers (DANGEROUS - default false) */
     private boolean enableNetwork = false;
 
+    /**
+     * Run a short, read-only Maven dependency prefetch with network access
+     * before retrying an offline build. This is the only phase that receives
+     * network access while {@link #enableNetwork} is false: it can download
+     * dependencies into the shared Maven cache, but it cannot build, test, or
+     * write to the project workspace. Disable this for air-gapped deployments
+     * with a pre-warmed cache.
+     */
+    private boolean enableDependencyPrefetch = true;
+
+    /** Timeout for the dependency prefetch phase, in seconds. */
+    @Positive
+    private int dependencyPrefetchTimeoutSeconds = 900;
+
     /** Clean up shared Maven cache volumes on shutdown (default false - opt-in) */
     private boolean cleanupSharedVolumes = false;
 
@@ -263,6 +277,12 @@ public class SandboxConfig {
 
     public boolean isEnableNetwork() { return enableNetwork; }
     public void setEnableNetwork(boolean enableNetwork) { this.enableNetwork = enableNetwork; }
+
+    public boolean isEnableDependencyPrefetch() { return enableDependencyPrefetch; }
+    public void setEnableDependencyPrefetch(boolean enableDependencyPrefetch) { this.enableDependencyPrefetch = enableDependencyPrefetch; }
+
+    public int getDependencyPrefetchTimeoutSeconds() { return dependencyPrefetchTimeoutSeconds; }
+    public void setDependencyPrefetchTimeoutSeconds(int dependencyPrefetchTimeoutSeconds) { this.dependencyPrefetchTimeoutSeconds = dependencyPrefetchTimeoutSeconds; }
 
     public boolean isCleanupSharedVolumes() { return cleanupSharedVolumes; }
     public void setCleanupSharedVolumes(boolean cleanupSharedVolumes) { this.cleanupSharedVolumes = cleanupSharedVolumes; }
@@ -410,6 +430,9 @@ public class SandboxConfig {
         }
         if (maxProcesses < 10) {
             throw new IllegalStateException("maxProcesses must be at least 10");
+        }
+        if (dependencyPrefetchTimeoutSeconds < 1) {
+            throw new IllegalStateException("dependencyPrefetchTimeoutSeconds must be positive");
         }
 
         if (workspaceRoots != null && workspaceRoots.stream().anyMatch(root -> root == null || root.isBlank())) {

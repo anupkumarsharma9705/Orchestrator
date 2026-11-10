@@ -55,7 +55,7 @@ public class TemplateEngine {
     }
 
     /**
-     * Generates a complete Spring Boot project skeleton in the target directory.
+     * Generates a Spring Boot project skeleton in the target directory.
      * 
      * @param project The project configuration
      * @param plan The execution plan with tasks
@@ -168,9 +168,11 @@ public class TemplateEngine {
         Map<String, String> vars = createCommonVariables(project);
         vars.put("datasource.url", "jdbc:postgresql://localhost:5432/" + project.name().toLowerCase());
         vars.put("datasource.username", "${DB_USERNAME:postgres}");
-        vars.put("datasource.password", "${DB_PASSWORD:postgres}");
+        // Required: the generated application and compose stack have no default
+        // database password.
+        vars.put("datasource.password", "${DB_PASSWORD}");
         vars.put("jpa.ddl-auto", "validate");
-        vars.put("jwt.secret", "${JWT_SECRET:}");
+        vars.put("jwt.secret", "${JWT_SECRET}");
         vars.put("jwt.expiration", "${JWT_EXPIRATION_MS:86400000}"); // 24 hours
 
         generateFile("application.yml", targetFile, vars);
@@ -193,7 +195,6 @@ public class TemplateEngine {
         vars.put("serviceName", project.name().toLowerCase());
         vars.put("dbName", project.name().toLowerCase());
         vars.put("dbUser", "postgres");
-        vars.put("dbPassword", "postgres");
 
         generateFile("docker-compose.yml", targetDir.resolve("docker-compose.yml"), vars);
     }

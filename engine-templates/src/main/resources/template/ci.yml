@@ -17,8 +17,9 @@ concurrency:
 env:
   MAVEN_OPTS: "-Xmx2g -XX:+UseG1GC"
   JAVA_VERSION: "21"
-  # Test-only signing key. Real deployments must provide their own secret.
-  JWT_SECRET: "0123456789abcdef0123456789abcdef"
+  # Ephemeral values for this CI job only. They are not deployment defaults
+  # and must be replaced by secrets in a real environment.
+  JWT_SECRET: "ci-only-jwt-secret-0123456789abcdef"
 
 jobs:
   build-and-test:
@@ -35,7 +36,8 @@ jobs:
         env:
           POSTGRES_DB: {{artifactId}}
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          # Ephemeral CI-only password; not a deployment default.
+          POSTGRES_PASSWORD: ci-only-postgres-password
         ports:
           - 5432:5432
         options: >-
@@ -60,7 +62,8 @@ jobs:
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/{{artifactId}}
           DB_USERNAME: postgres
-          DB_PASSWORD: postgres
+          # Ephemeral CI-only password; not a deployment default.
+          DB_PASSWORD: ci-only-postgres-password
 
       - name: OWASP Dependency-Check (optional)
         if: env.NVD_API_KEY != ''

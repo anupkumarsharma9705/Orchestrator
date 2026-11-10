@@ -39,6 +39,7 @@ orchestrator:
   sandbox:
     workspace-roots: ${java.io.tmpdir}/orchestrator-test-workspaces
     enable-network: false
+    enable-dependency-prefetch: true
   security:
     trust-forwarded-headers: false
   model-router:

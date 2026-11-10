@@ -20,8 +20,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Service for generating Spring Boot projects offline (without server).
- * Uses the local TemplateEngine to generate a complete Spring Boot project skeleton.
+ * Service for generating a Spring Boot project scaffold offline (without a server).
+ * Uses the local TemplateEngine to generate the project skeleton. The generated
+ * project is not a complete implementation of the requested feature: domain
+ * code, CRUD endpoints, migrations, and login/token issuance are not generated.
  */
 @Service
 public class OfflineModeService {
@@ -35,7 +37,7 @@ public class OfflineModeService {
     }
 
     /**
-     * Generates a complete Spring Boot project offline.
+     * Generates a Spring Boot project scaffold offline.
      * 
      * @param name Project name
      * @param description Natural language description
@@ -55,7 +57,7 @@ public class OfflineModeService {
 
         // Create project configuration
         String projectName = name.trim();
-        String projectDescription = description != null ? description.trim() : "Generated Spring Boot project";
+        String projectDescription = description != null ? description.trim() : "Generated Spring Boot project skeleton";
         
         // Derive base package and class name from name if not provided
         String derivedBasePackage = basePackage != null && !basePackage.isBlank() 
@@ -87,10 +89,10 @@ public class OfflineModeService {
         Path targetDir = projectRoot.resolve(projectName).toAbsolutePath().normalize();
 
         if (dryRun) {
-            log.info("DRY RUN: Would generate project '{}' at {}", projectName, targetDir);
+            log.info("DRY RUN: Would generate project skeleton '{}' at {}", projectName, targetDir);
             return new OfflineGenerationResult(
                 true,
-                "DRY RUN: Project structure preview",
+                "DRY RUN: Project skeleton preview (domain code and auth endpoints are not generated)",
                 targetDir,
                 listFilesThatWouldBeGenerated(project),
                 plan
@@ -100,11 +102,12 @@ public class OfflineModeService {
         // Generate the project
         templateEngine.generateProject(project, plan, targetDir);
 
-        log.info("Offline generation completed for: {}", projectName);
+        log.info("Offline scaffold generation completed for: {}", projectName);
 
         return new OfflineGenerationResult(
             true,
-            "Project generated successfully at: " + targetDir,
+            "Spring Boot project skeleton generated at: " + targetDir
+                + " (domain code and auth endpoints are not generated)",
             targetDir,
             listGeneratedFiles(targetDir),
             plan
@@ -115,12 +118,14 @@ public class OfflineModeService {
      * Creates a basic execution plan for offline generation.
      */
     private Plan createBasicPlan(String projectName, String description) {
-        // Create a simple plan with basic tasks
+        // Create a plan that describes the scaffold tasks accurately. These are
+        // generation steps, not evidence that the requested domain feature was
+        // implemented.
         List<PlanTask> tasks = List.of(
             new PlanTask(
                 "task-1",
-                "Project Setup",
-                "Create project directory structure and core files (pom.xml, Application.java, application.yml)",
+                "Project Skeleton Setup",
+                "Create project directory structure and scaffold files (pom.xml, Application.java, application.yml)",
                 List.of("pom.xml", "src/main/java/.../Application.java", "src/main/resources/application.yml"),
                 List.of(),
                 List.of("req-1"),
@@ -131,8 +136,8 @@ public class OfflineModeService {
             ),
             new PlanTask(
                 "task-2",
-                "Security Configuration",
-                "Generate Spring Security configuration with JWT authentication",
+                "Security Scaffold",
+                "Generate Spring Security configuration and JWT bearer-token validation filter (no login endpoint or token issuance)",
                 List.of("src/main/java/.../config/SecurityConfig.java", "src/main/java/.../security/JwtAuthenticationFilter.java"),
                 List.of("task-1"),
                 List.of("req-2"),
@@ -143,8 +148,8 @@ public class OfflineModeService {
             ),
             new PlanTask(
                 "task-3",
-                "Exception Handling",
-                "Generate global exception handler and error responses",
+                "Exception Handling Scaffold",
+                "Generate a global exception handler and error responses",
                 List.of("src/main/java/.../exception/GlobalExceptionHandler.java"),
                 List.of("task-1"),
                 List.of("req-3"),
@@ -155,8 +160,8 @@ public class OfflineModeService {
             ),
             new PlanTask(
                 "task-4",
-                "CI/CD Pipeline",
-                "Generate GitHub Actions workflow for CI/CD",
+                "CI Pipeline Scaffold",
+                "Generate a GitHub Actions workflow for CI",
                 List.of(".github/workflows/ci.yml"),
                 List.of("task-1"),
                 List.of("req-4"),
@@ -167,7 +172,7 @@ public class OfflineModeService {
             ),
             new PlanTask(
                 "task-5",
-                "Containerization",
+                "Container Scaffold",
                 "Generate Dockerfile and docker-compose.yml",
                 List.of("Dockerfile", "docker-compose.yml"),
                 List.of("task-1"),
@@ -179,8 +184,8 @@ public class OfflineModeService {
             ),
             new PlanTask(
                 "task-6",
-                "Documentation",
-                "Generate README.md and gitignore",
+                "Documentation Scaffold",
+                "Generate README.md and .gitignore",
                 List.of("README.md", ".gitignore"),
                 List.of("task-1"),
                 List.of("req-6"),
@@ -193,7 +198,7 @@ public class OfflineModeService {
 
         return new Plan(
             UUID.randomUUID().toString(),
-            "Generate Spring Boot project: " + projectName,
+            "Generate Spring Boot project skeleton: " + projectName,
             tasks,
             Instant.now(),
             Instant.now()
@@ -205,34 +210,22 @@ public class OfflineModeService {
      */
     private List<String> listFilesThatWouldBeGenerated(Project project) {
         String basePath = "src/main/java/" + project.basePackage().replace(".", "/");
-        String projectName = project.name().toLowerCase().replace(" ", "-");
-        
-        return List.of(
+
+        return java.util.stream.Stream.of(
             "pom.xml",
-            "src/main/java/" + project.basePackage().replace(".", "/") + "/" + project.className() + "Application.java",
+            basePath + "/" + project.className() + "Application.java",
             "src/main/resources/application.yml",
             "Dockerfile",
             "docker-compose.yml",
             ".gitignore",
             "README.md",
-            "Dockerfile",
-            "docker-compose.yml",
-            ".gitignore",
-            "README.md",
             "checkstyle.xml",
             "spotbugs-exclude.xml",
             ".github/workflows/ci.yml",
-            "checkstyle.xml",
-            "spotbugs-exclude.xml",
-            "src/main/java/" + project.basePackage().replace(".", "/") + "/config/SecurityConfig.java",
-            "src/main/java/" + project.basePackage().replace(".", "/") + "/security/JwtAuthenticationFilter.java",
-            "src/main/java/" + project.basePackage().replace(".", "/") + "/exception/GlobalExceptionHandler.java",
-            ".github/workflows/ci.yml",
-            "checkstyle.xml",
-            "spotbugs-exclude.xml"
-        ).stream()
-        .map(f -> "  " + f)
-        .collect(Collectors.toList());
+            basePath + "/config/SecurityConfig.java",
+            basePath + "/security/JwtAuthenticationFilter.java",
+            basePath + "/exception/GlobalExceptionHandler.java"
+        ).map(f -> "  " + f).collect(Collectors.toList());
     }
 
     /**

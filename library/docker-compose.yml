@@ -8,8 +8,9 @@ services:
       - "8080:8080"
     environment:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/library
-      - DB_USERNAME=postgres
-      - DB_PASSWORD=postgres
+      - DB_USERNAME=${DB_USERNAME:-postgres}
+      # Required - compose refuses to start without a database password.
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required (at least 32 bytes)}
       - JWT_ISSUER=${JWT_ISSUER:-companion}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
@@ -25,16 +26,18 @@ services:
     container_name: library-postgres
     environment:
       - POSTGRES_DB=library
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=${DB_USERNAME:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
     ports:
-      - "5432:5432"
+      # Bind to the loopback interface so the database is not exposed to the
+      # local network by default.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - library-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d library"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d library"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -74,6 +74,33 @@ public class SandboxService {
             + "(?::[a-zA-Z0-9][a-zA-Z0-9._-]{0,127})?"
             + "(?:@sha256:[a-fA-F0-9]{64})?$");
 
+    /**
+     * Maven output fragments that indicate a cold cache or an inaccessible
+     * repository rather than a genuine compile/test failure. Matching output
+     * triggers the networked dependency prefetch.
+     */
+    private static final List<String> DEPENDENCY_FAILURE_MARKERS = List.of(
+        "could not resolve dependencies",
+        "could not resolve all files for configuration",
+        "non-resolvable parent pom",
+        "non-resolvable import pom",
+        "the following artifacts could not be resolved",
+        "could not find artifact",
+        "could not transfer artifact",
+        "failed to read artifact descriptor",
+        "or one of its dependencies could not be resolved",
+        "error resolving version for plugin",
+        "unable to resolve artifact",
+        "could not resolve artifact",
+        "resolution will not be reattempted",
+        "requires online mode",
+        "in offline mode",
+        "network is unreachable",
+        "unknown host",
+        "connection refused",
+        "connect timed out"
+    );
+
     private final SandboxConfig config;
     private final List<Path> allowedWorkspaceRoots;
     private DockerClient dockerClient;
@@ -332,6 +359,92 @@ public class SandboxService {
      * @param timeoutSeconds timeout in seconds (0 = default)
      */
     public SandboxResult run(List<String> arguments, Path workspacePath, String relativeWorkingDirectory, int timeoutSeconds) {
+        return runInternal(arguments, workspacePath, relativeWorkingDirectory, timeoutSeconds,
+            config.isEnableNetwork(), false, "command");
+    }
+
+    /**
+     * Runs a Maven build or test with a two-phase dependency strategy.
+     *
+     * <p>The first attempt runs with the configured network mode, which is
+     * {@code none} by default. If it fails while resolving dependencies or
+     * plugins, a separate <em>prefetch</em> container runs
+     * {@code dependency:go-offline} with network access and a read-only
+     * workspace. The original command is then retried with no network. The
+     * prefetch phase can only warm the shared Maven cache; it cannot build,
+     * test, or modify the project.</p>
+     *
+     * <p>This method assumes the workspace is trusted: Maven may load build
+     * extensions from the project while resolving dependencies. Do not use it
+     * on untrusted projects with {@code enableDependencyPrefetch=true}.</p>
+     */
+    public SandboxResult runMaven(List<String> arguments, Path workspacePath,
+                                  String relativeWorkingDirectory, int timeoutSeconds) {
+        if (arguments == null || arguments.isEmpty() || !"mvn".equals(arguments.get(0))) {
+            return SandboxResult.error("runMaven requires a command starting with 'mvn'", Duration.ZERO);
+        }
+
+        SandboxResult firstAttempt = runInternal(arguments, workspacePath, relativeWorkingDirectory,
+            timeoutSeconds, config.isEnableNetwork(), false, "maven");
+
+        if (firstAttempt.exitCode() == 0
+                || firstAttempt.timedOut()
+                || firstAttempt.oomKilled()
+                || config.isEnableNetwork()
+                || !config.isEnableDependencyPrefetch()
+                || !isDependencyResolutionFailure(firstAttempt)) {
+            return firstAttempt;
+        }
+
+        log.info("Maven dependency resolution failed; warming the cache in a read-only networked prefetch phase");
+
+        SandboxResult prefetch = runInternal(mavenPrefetchArguments(), workspacePath, relativeWorkingDirectory,
+            config.getDependencyPrefetchTimeoutSeconds(), true, true, "maven dependency prefetch");
+
+        if (prefetch.exitCode() != 0 || prefetch.timedOut() || prefetch.oomKilled()) {
+            log.warn("Maven dependency prefetch failed (exit={}, timedOut={}, oomKilled={}); "
+                    + "returning the original offline failure",
+                prefetch.exitCode(), prefetch.timedOut(), prefetch.oomKilled());
+            return firstAttempt;
+        }
+
+        // Retry the build/test with the configured network mode. The cache is
+        // now warm, so it should succeed without egress.
+        return runInternal(arguments, workspacePath, relativeWorkingDirectory,
+            timeoutSeconds, config.isEnableNetwork(), false, "maven retry");
+    }
+
+    /**
+     * Command used for the trusted dependency prefetch phase. It resolves the
+     * project's dependencies and build plugins but does not compile or test.
+     */
+    static List<String> mavenPrefetchArguments() {
+        return List.of("mvn", "-B", "-ntp", "-DskipTests",
+            "dependency:go-offline", "dependency:resolve-plugins");
+    }
+
+    /**
+     * Returns true when a failed Maven run looks like a cold-cache or missing
+     * dependency/plugin failure. Kept package-private for unit testing.
+     */
+    static boolean isDependencyResolutionFailure(SandboxResult result) {
+        if (result == null) {
+            return false;
+        }
+        String output = ((result.stdout() == null ? "" : result.stdout()) + "\n"
+            + (result.stderr() == null ? "" : result.stderr())).toLowerCase(java.util.Locale.ROOT);
+        for (String marker : DEPENDENCY_FAILURE_MARKERS) {
+            if (output.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private SandboxResult runInternal(List<String> arguments, Path workspacePath,
+                                      String relativeWorkingDirectory, int timeoutSeconds,
+                                      boolean networkEnabled, boolean readOnlyWorkspace,
+                                      String phase) {
         Instant start = Instant.now();
         int timeout = timeoutSeconds > 0 ? timeoutSeconds : config.getDefaultTimeoutSeconds();
         timeout = Math.min(timeout, config.getMaxTimeoutSeconds());
@@ -358,8 +471,9 @@ public class SandboxService {
             return SandboxResult.error("Invalid sandbox working directory: " + relativeWorkingDirectory, Duration.ZERO);
         }
 
-        log.info("Running command in sandbox: {} (workdir: {}, timeout: {}s)",
-            sanitizeForLog(String.join(" ", validatedArguments)), containerWorkingDirectory, timeout);
+        log.info("Running {} in sandbox: {} (workdir: {}, timeout: {}s, network: {})",
+            phase, sanitizeForLog(String.join(" ", validatedArguments)),
+            containerWorkingDirectory, timeout, networkEnabled ? "bridge" : "none");
 
         // Validate workspace path - MUST be within an allowed root directory
         Path validatedWorkspacePath = validateWorkspacePath(workspacePath);
@@ -372,7 +486,9 @@ public class SandboxService {
         String containerId = null;
         try {
             // Create container
-            CreateContainerResponse container = createContainer(cmdArray, validatedWorkspacePath, containerWorkingDirectory);
+            CreateContainerResponse container = createContainer(
+                cmdArray, validatedWorkspacePath, containerWorkingDirectory,
+                networkEnabled, readOnlyWorkspace);
             containerId = container.getId();
 
             // Start container
@@ -718,7 +834,10 @@ public class SandboxService {
     /**
      * Creates the Docker container with all security and resource limits.
      */
-    private CreateContainerResponse createContainer(String[] cmdArray, Path workspacePath, String containerWorkingDirectory) {
+    private CreateContainerResponse createContainer(String[] cmdArray, Path workspacePath,
+                                                    String containerWorkingDirectory,
+                                                    boolean networkEnabled,
+                                                    boolean readOnlyWorkspace) {
         // Validate the Docker image against security policies
         config.validateImage(config.getDockerImage());
         
@@ -727,7 +846,7 @@ public class SandboxService {
 
         // docker-java's withBinds replaces the existing array, so both mounts
         // must be supplied in a single call.
-        Bind workspaceBind = createWorkspaceBind(workspacePath);
+        Bind workspaceBind = createWorkspaceBind(workspacePath, readOnlyWorkspace);
         if (workspaceBind == null) {
             throw new IllegalStateException(
                 "Workspace is outside the shared sandbox volume root: " + workspacePath);
@@ -744,10 +863,12 @@ public class SandboxService {
             .withCpuCount(config.getCpuLimitCores())
             // Process limit
             .withPidsLimit((long) config.getMaxProcesses())
-            // Workspace mount (read-write) and isolated Maven cache
+            // Workspace mount (read-write for builds; read-only for prefetch)
+            // and isolated Maven cache
             .withBinds(binds)
-            // Network - disabled by default
-            .withNetworkMode(config.isEnableNetwork() ? "bridge" : "none")
+            // Network - disabled by default; only the trusted prefetch phase
+            // enables it explicitly.
+            .withNetworkMode(networkEnabled ? "bridge" : "none")
             // Security - READ-ONLY ROOT FILESYSTEM
             .withReadonlyRootfs(true)
             // Writable scratch/cache locations. Everything else stays read-only.
@@ -790,9 +911,19 @@ public class SandboxService {
      * legacy {@code volume/subpath} syntax is not a valid volume name.</p>
      */
     Bind createWorkspaceBind(Path workspacePath) {
+        return createWorkspaceBind(workspacePath, false);
+    }
+
+    /**
+     * Builds the workspace mount for a sandbox container, optionally read-only.
+     * The prefetch phase uses a read-only mount so dependency resolution cannot
+     * modify the project while network access is enabled.
+     */
+    Bind createWorkspaceBind(Path workspacePath, boolean readOnly) {
+        String accessMode = readOnly ? "ro" : "rw";
         String volume = config.getWorkspaceVolume();
         if (volume == null || volume.isBlank()) {
-            return Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":rw");
+            return Bind.parse(workspacePath.toString() + ":" + config.getWorkspaceMountPath() + ":" + accessMode);
         }
 
         Path volumeRoot;
@@ -825,7 +956,7 @@ public class SandboxService {
         String source = relative.toString().isEmpty()
             ? mountpoint
             : mountpoint + "/" + relative.toString().replace('\\', '/');
-        return Bind.parse(source + ":" + config.getWorkspaceMountPath() + ":rw");
+        return Bind.parse(source + ":" + config.getWorkspaceMountPath() + ":" + accessMode);
     }
 
     /**

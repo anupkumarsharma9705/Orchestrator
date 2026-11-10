@@ -1,5 +1,6 @@
 package com.example.orchestrator.sandbox;
 
+import com.github.dockerjava.api.model.AccessMode;
 import com.github.dockerjava.api.model.Bind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,6 +69,8 @@ class SandboxServiceTest {
         assertThat(config.getCpuLimitCores()).isEqualTo(2);
         assertThat(config.getMaxProcesses()).isEqualTo(100);
         assertThat(config.isEnableNetwork()).isFalse();
+        assertThat(config.isEnableDependencyPrefetch()).isTrue();
+        assertThat(config.getDependencyPrefetchTimeoutSeconds()).isPositive();
         assertThat(config.getWorkspaceMountPath()).isEqualTo("/workspace");
         // New security defaults
         assertThat(config.getDeniedImagePatterns()).contains("*:latest");
@@ -288,6 +291,62 @@ class SandboxServiceTest {
         doReturn(null).when(sandboxService).resolveWorkspaceVolumeMountpoint("orchestrator-workspace");
 
         assertThat(sandboxService.createWorkspaceBind(project.toRealPath())).isNull();
+    }
+
+    @Test
+    void createWorkspaceBind_readOnlyPrefetchUsesRoAccessMode(@TempDir Path tempDir) throws IOException {
+        Path project = tempDir.resolve("library");
+        Files.createDirectories(project);
+
+        config = createValidTestConfig();
+        config.setWorkspaceRoots(List.of(tempDir.toString()));
+        sandboxService = new SandboxService(config);
+
+        Bind readWrite = sandboxService.createWorkspaceBind(project.toRealPath());
+        Bind readOnly = sandboxService.createWorkspaceBind(project.toRealPath(), true);
+
+        assertThat(readWrite.getAccessMode()).isEqualTo(AccessMode.rw);
+        assertThat(readOnly.getAccessMode()).isEqualTo(AccessMode.ro);
+        assertThat(readOnly.getVolume().getPath()).isEqualTo("/workspace");
+    }
+
+    @Test
+    void mavenPrefetchArguments_resolveDependenciesWithoutBuilding() {
+        assertThat(SandboxService.mavenPrefetchArguments())
+            .containsExactly("mvn", "-B", "-ntp", "-DskipTests",
+                "dependency:go-offline", "dependency:resolve-plugins");
+    }
+
+    @Test
+    void isDependencyResolutionFailure_matchesColdCacheErrors() {
+        assertThat(SandboxService.isDependencyResolutionFailure(
+            SandboxResult.success(1,
+                "[ERROR] Could not resolve dependencies for project com.example:library:jar:0.0.1",
+                "", Duration.ofSeconds(1))))
+            .isTrue();
+
+        assertThat(SandboxService.isDependencyResolutionFailure(
+            SandboxResult.success(1, "",
+                "Non-resolvable parent POM for com.example:library:0.0.1: Could not transfer artifact",
+                Duration.ofSeconds(1))))
+            .isTrue();
+
+        assertThat(SandboxService.isDependencyResolutionFailure(
+            SandboxResult.success(1,
+                "Cannot access central in offline mode and the artifact has not been downloaded",
+                "", Duration.ofSeconds(1))))
+            .isTrue();
+    }
+
+    @Test
+    void isDependencyResolutionFailure_ignoresRealCompileFailures() {
+        assertThat(SandboxService.isDependencyResolutionFailure(
+            SandboxResult.success(1,
+                "[ERROR] COMPILATION ERROR: cannot find symbol",
+                "", Duration.ofSeconds(1))))
+            .isFalse();
+
+        assertThat(SandboxService.isDependencyResolutionFailure(null)).isFalse();
     }
 
     @Test

@@ -2,12 +2,18 @@
 
 REST CRUD for Book
 
+> **Generated skeleton.** This project is a Spring Boot scaffold, not a finished
+> implementation of the requested feature. The domain model, CRUD endpoints,
+> database migrations, login endpoint, token issuance, and authorization rules
+> are not generated. Replace the placeholder packages and add those pieces
+> before deploying.
+
 ## Tech Stack
 
 - **Java**: 21 LTS
 - **Spring Boot**: 4.1.1
-- **Database**: PostgreSQL 16 (Flyway for migrations)
-- **Security**: JWT (JJWT), BCrypt
+- **Database**: PostgreSQL 16 (Flyway enabled; no migrations are generated)
+- **Security**: Spring Security scaffold with bearer-token validation (JJWT) and a BCrypt encoder. Login and token issuance are not included.
 - **Build**: Maven 3.9+
 - **Container**: Docker, Docker Compose
 - **Testing**: JUnit 5, Testcontainers, Mockito
@@ -25,8 +31,9 @@ REST CRUD for Book
 ### Using Docker Compose (Recommended)
 
 ```bash
-# Set the required JWT signing secret (at least 32 bytes)
+# Set the required signing secret and database password.
 export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
+export DB_PASSWORD="replace-with-a-strong-database-password"
 
 # Start PostgreSQL and the application
 docker compose up -d
@@ -41,9 +48,9 @@ docker compose logs -f library
 # Start PostgreSQL only
 docker compose up -d postgres
 
-# JWT_SECRET is required (at least 32 bytes)
+# JWT_SECRET and DB_PASSWORD are required; neither has a default.
 export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
-export DB_PASSWORD="postgres"
+export DB_PASSWORD="replace-with-a-strong-database-password"
 
 # Run application
 mvn spring-boot:run
@@ -110,9 +117,18 @@ mvn verify
 ## Security
 
 ### Authentication
-- JWT-based stateless authentication filter
-- BCrypt password encoder bean available for your login flow
-- Configure the signing secret with `JWT_SECRET` (minimum 32 bytes)
+- `JwtAuthenticationFilter` validates bearer tokens signed with `JWT_SECRET`.
+- **No login endpoint, user store, refresh flow, or token issuance is included.**
+  Until you add one, a new protected controller cannot be called successfully.
+- The `PasswordEncoder` bean is provided for a future login flow.
+- **No rate limiting is included.** Add it at the API gateway or in the
+  application before exposing authentication endpoints.
+
+### Authorization
+- All endpoints except the actuator health/info probes require authentication.
+- When you add a login endpoint, permit it explicitly in `SecurityConfig`.
+- `@EnableMethodSecurity` is enabled, but no role or permission rules are
+  generated beyond the optional `roles` claim read by the JWT filter.
 
 ### Security Headers
 - Spring Security's default response headers are enabled
@@ -148,8 +164,9 @@ mvn -Psecurity verify
 
 ### Docker
 ```bash
-# Provide JWT_SECRET; compose starts PostgreSQL too.
+# Provide JWT_SECRET and DB_PASSWORD; compose starts PostgreSQL too.
 export JWT_SECRET="replace-with-a-random-secret-of-at-least-32-bytes"
+export DB_PASSWORD="replace-with-a-strong-database-password"
 docker compose up -d --build
 ```
 
@@ -164,7 +181,7 @@ Use the built image as the basis for your own manifests and provide
 | `JWT_SECRET` | JWT signing secret (min 32 bytes) | Required |
 | `JWT_ISSUER` | JWT issuer claim | companion |
 | `DB_USERNAME` | PostgreSQL username | postgres |
-| `DB_PASSWORD` | PostgreSQL password (change in production) | postgres |
+| `DB_PASSWORD` | PostgreSQL password | Required (no default) |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated origins | http://localhost:3000 |
 
 ## License

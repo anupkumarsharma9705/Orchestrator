@@ -11,7 +11,8 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/library
     username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    # Required - there is deliberately no default database password.
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 20
@@ -86,7 +87,7 @@ logging:
 app:
   jwt:
     # Set JWT_SECRET to a random value of at least 32 bytes.
-    secret: ${JWT_SECRET:}
+    secret: ${JWT_SECRET}
     expiration: ${JWT_EXPIRATION_MS:86400000}
     issuer: ${JWT_ISSUER:companion}
   cors:

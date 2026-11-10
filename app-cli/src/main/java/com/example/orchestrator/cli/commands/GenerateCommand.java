@@ -196,7 +196,9 @@ public class GenerateCommand implements Callable<Integer> {
             new com.example.orchestrator.templates.TemplateEngine()
         );
 
-        System.out.println(Ansi.info(" Generating project offline (no server required)..."));
+        System.out.println(Ansi.info(" Generating project skeleton offline (no server required)..."));
+        System.out.println();
+        System.out.println(Ansi.warning(" Scaffold only: domain code, database migrations, and login/token issuance are not generated."));
         System.out.println();
 
         OfflineModeService.OfflineGenerationResult result =
@@ -211,7 +213,7 @@ public class GenerateCommand implements Callable<Integer> {
                 System.out.println(Ansi.dim("  " + file));
             }
             System.out.println();
-            System.out.println(Ansi.dim("Plan:"));
+            System.out.println(Ansi.dim("Scaffold plan:"));
             System.out.println(Ansi.dim("  Tasks: " + result.plan().tasks().size()));
             for (com.example.orchestrator.model.PlanTask task : result.plan().tasks()) {
                 System.out.println(Ansi.dim("  - " + task.title() + " (" + task.files().size() + " files)"));
@@ -222,7 +224,7 @@ public class GenerateCommand implements Callable<Integer> {
                 System.out.println(Ansi.warning(" DRY RUN: No files were created. Run without --dry-run to generate."));
             } else {
                 System.out.println();
-                System.out.println(Ansi.success(" " + TerminalSupport.CHECK + " Project generated at: "
+                System.out.println(Ansi.success(" " + TerminalSupport.CHECK + " Project skeleton generated at: "
                     + result.projectPath()));
             }
             return 0;

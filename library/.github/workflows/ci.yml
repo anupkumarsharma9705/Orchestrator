@@ -11,14 +11,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{github.ref}}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   MAVEN_OPTS: "-Xmx2g -XX:+UseG1GC"
   JAVA_VERSION: "21"
-  # Test-only signing key. Real deployments must provide their own secret.
-  JWT_SECRET: "0123456789abcdef0123456789abcdef"
+  # Ephemeral values for this CI job only. They are not deployment defaults
+  # and must be replaced by secrets in a real environment.
+  JWT_SECRET: "ci-only-jwt-secret-0123456789abcdef"
 
 jobs:
   build-and-test:
@@ -27,7 +28,7 @@ jobs:
     timeout-minutes: 30
     env:
       # Empty when the secret is not configured; the optional scan checks it.
-      NVD_API_KEY: ${{secrets.NVD_API_KEY}}
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
     services:
       postgres:
@@ -35,7 +36,8 @@ jobs:
         env:
           POSTGRES_DB: library
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          # Ephemeral CI-only password; not a deployment default.
+          POSTGRES_PASSWORD: ci-only-postgres-password
         ports:
           - 5432:5432
         options: >-
@@ -51,7 +53,7 @@ jobs:
       - name: Set up JDK 21
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
         with:
-          java-version: ${{env.JAVA_VERSION}}
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
           cache: maven
 
@@ -60,7 +62,8 @@ jobs:
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/library
           DB_USERNAME: postgres
-          DB_PASSWORD: postgres
+          # Ephemeral CI-only password; not a deployment default.
+          DB_PASSWORD: ci-only-postgres-password
 
       - name: OWASP Dependency-Check (optional)
         if: env.NVD_API_KEY != ''
