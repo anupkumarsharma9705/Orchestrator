@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE module PUBLIC "-//Puppy Crawl//DTD Check Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="fileExtensions" value="java"/>
+
+    <module name="LineLength">
+        <property name="max" value="120"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
+    </module>
+
+    <!-- Custom security rules. These run against the whole file so they also
+         catch constants and annotations, not just statements. -->
+    <module name="RegexpSingleline">
+        <property name="format" value="MessageDigest\.getInstance\s*\(\s*[&quot;']MD5[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: MD5 is cryptographically broken. Use SHA-256 or stronger."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="MessageDigest\.getInstance\s*\(\s*[&quot;']SHA1[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: SHA1 is cryptographically broken. Use SHA-256 or stronger."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']DES[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: DES is cryptographically broken. Use AES."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']RC4[&quot;']\s*\)"/>
+        <property name="message" value="SEC-5: RC4 is cryptographically broken. Use AES."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Cipher\.getInstance\s*\(\s*[&quot;']AES/ECB"/>
+        <property name="message" value="SEC-5: ECB mode is insecure. Use CBC or GCM mode."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="String\s+\w+\s*=\s*&quot;.*(password|secret|api.?key).*&quot;"/>
+        <property name="message" value="SEC-7: Potential hardcoded credential. Use environment variables or a secret store."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="Statement\.execute\s*\(\s*.*\+.*\)"/>
+        <property name="message" value="SEC-2: Potential SQL concatenation. Use parameterized queries."/>
+    </module>
+    <module name="RegexpSingleline">
+        <property name="format" value="PreparedStatement.*\.setString\s*\(\s*\d+,\s*.*\+.*\)"/>
+        <property name="message" value="SEC-2: Potential SQL concatenation in PreparedStatement. Use parameterized queries."/>
+    </module>
+
+    <module name="SuppressWarningsFilter"/>
+
+    <module name="TreeWalker">
+        <module name="SuppressWarningsHolder"/>
+
+        <!-- Naming conventions -->
+        <module name="ConstantName"/>
+        <module name="LocalFinalVariableName"/>
+        <module name="LocalVariableName"/>
+        <module name="MemberName"/>
+        <module name="MethodName"/>
+        <module name="PackageName"/>
+        <module name="ParameterName"/>
+        <module name="StaticVariableName"/>
+        <module name="TypeName"/>
+
+        <!-- Imports -->
+        <module name="AvoidStarImport"/>
+        <module name="UnusedImports"/>
+
+        <!-- Whitespace -->
+        <module name="EmptyForIteratorPad"/>
+        <module name="MethodParamPad"/>
+        <module name="NoWhitespaceAfter"/>
+        <module name="NoWhitespaceBefore"/>
+        <module name="OperatorWrap"/>
+        <module name="ParenPad"/>
+        <module name="TypecastParenPad"/>
+        <module name="WhitespaceAfter"/>
+        <module name="WhitespaceAround"/>
+
+        <!-- Modifier order -->
+        <module name="ModifierOrder"/>
+
+        <!-- Blocks -->
+        <module name="AvoidNestedBlocks"/>
+        <module name="EmptyBlock">
+            <property name="option" value="TEXT"/>
+        </module>
+        <module name="LeftCurly"/>
+        <module name="NeedBraces"/>
+        <module name="RightCurly"/>
+
+        <!-- Coding problems -->
+        <module name="EmptyStatement"/>
+        <module name="EqualsHashCode"/>
+        <module name="HiddenField">
+            <property name="ignoreConstructorParameter" value="true"/>
+            <property name="ignoreSetter" value="true"/>
+        </module>
+        <module name="IllegalInstantiation"/>
+        <module name="InnerAssignment"/>
+        <module name="MissingSwitchDefault"/>
+
+        <!-- Class design -->
+        <module name="DefaultComesLast"/>
+        <module name="EqualsAvoidNull"/>
+        <module name="FinalClass"/>
+        <module name="HideUtilityClassConstructor"/>
+        <module name="InterfaceIsType"/>
+        <module name="MutableException"/>
+        <module name="OneTopLevelClass"/>
+
+        <!-- Miscellaneous -->
+        <module name="ArrayTypeStyle"/>
+        <module name="UpperEll"/>
+    </module>
+</module>
