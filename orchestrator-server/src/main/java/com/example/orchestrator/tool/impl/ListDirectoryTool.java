@@ -4,6 +4,7 @@ import com.example.orchestrator.project.Project;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -74,12 +75,7 @@ public class ListDirectoryTool implements Tool {
             ListDirectoryInput params = objectMapper.readValue(input, ListDirectoryInput.class);
             
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-            
-            // Security: ensure target is within project root
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("listDirectory", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
             if (!Files.exists(targetPath) || !Files.isDirectory(targetPath)) {
                 return ToolResult.failure("listDirectory", "Directory not found: " + params.path, System.currentTimeMillis() - start);
@@ -93,6 +89,7 @@ public class ListDirectoryTool implements Tool {
             
             Files.walk(targetPath, maxDepth)
                 .filter(p -> !p.equals(targetPath))
+                .filter(p -> !Files.isSymbolicLink(p))
                 .filter(this::shouldInclude)
                 .forEach(p -> {
                     try {
@@ -109,6 +106,8 @@ public class ListDirectoryTool implements Tool {
             String output = objectMapper.writeValueAsString(new ListDirectoryOutput(entries));
             return ToolResult.success("listDirectory", output, System.currentTimeMillis() - start);
             
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("listDirectory", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("listDirectory", e.getMessage(), System.currentTimeMillis() - start);
         }

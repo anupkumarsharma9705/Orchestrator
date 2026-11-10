@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -69,11 +70,8 @@ public class GitStatusTool implements Tool {
             GitStatusInput params = objectMapper.readValue(input, GitStatusInput.class);
 
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("gitStatus", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("gitStatus", "Path not found: " + params.path, System.currentTimeMillis() - start);
             }
@@ -119,6 +117,8 @@ public class GitStatusTool implements Tool {
             String output = objectMapper.writeValueAsString(new GitStatusOutput(true, branch, statuses));
             return ToolResult.success("gitStatus", output, System.currentTimeMillis() - start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("gitStatus", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("gitStatus", e.getMessage(), System.currentTimeMillis() - start);
         }

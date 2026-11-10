@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -60,11 +61,8 @@ public class GitDiffTool implements Tool {
             GitDiffInput params = objectMapper.readValue(input, GitDiffInput.class);
 
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("gitDiff", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("gitDiff", "Path not found: " + params.path, System.currentTimeMillis() - start);
             }
@@ -101,6 +99,8 @@ public class GitDiffTool implements Tool {
                 new GitDiffOutput(true, sandboxResult.stdout()));
             return ToolResult.success("gitDiff", result, System.currentTimeMillis() - start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("gitDiff", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("gitDiff", e.getMessage(), System.currentTimeMillis() - start);
         }

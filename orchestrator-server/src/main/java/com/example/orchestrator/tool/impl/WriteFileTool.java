@@ -4,12 +4,15 @@ import com.example.orchestrator.project.Project;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.regex.Pattern;
 
@@ -72,54 +75,40 @@ public class WriteFileTool implements Tool {
             }
             
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path).normalize();
+            // Validates the nearest existing ancestor, so genuinely new nested
+            // package directories are allowed while symlink escapes are not.
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
-            // Resolve symlinks to prevent bypass via symlink
-            Path realBasePath;
-            Path realTargetPath;
-            try {
-                realBasePath = basePath.toRealPath();
-                realTargetPath = targetPath.toRealPath();
-            } catch (IOException e) {
-                // If target doesn't exist yet, resolve parent and check
-                Path parentPath = targetPath.getParent();
-                if (parentPath != null) {
-                    try {
-                        realBasePath = basePath.toRealPath();
-                        realTargetPath = parentPath.toRealPath().resolve(targetPath.getFileName());
-                    } catch (IOException ex) {
-                        return ToolResult.failure("writeFile", "Invalid path: " + ex.getMessage(), System.currentTimeMillis() - start);
-                    }
-                } else {
-                    return ToolResult.failure("writeFile", "Invalid path: no parent directory", System.currentTimeMillis() - start);
-                }
-            }
-            
-            if (!realTargetPath.startsWith(realBasePath)) {
-                return ToolResult.failure("writeFile", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
-            
-            if (params.content.getBytes().length > MAX_FILE_SIZE) {
+            if (params.content.getBytes(StandardCharsets.UTF_8).length > MAX_FILE_SIZE) {
                 return ToolResult.failure("writeFile", "Content too large: " + params.content.length() + " bytes (max " + MAX_FILE_SIZE + ")", System.currentTimeMillis() - start);
             }
             
-            // Create backup if file exists
+            // Create backup if file exists. Report only a workspace-relative path.
             String backupPath = null;
-            if (Files.exists(targetPath) && Files.isRegularFile(targetPath)) {
-                backupPath = targetPath.toString() + ".bak." + Instant.now().toEpochMilli();
-                Files.copy(targetPath, Path.of(backupPath));
+            if (Files.exists(targetPath, LinkOption.NOFOLLOW_LINKS)
+                    && Files.isRegularFile(targetPath, LinkOption.NOFOLLOW_LINKS)) {
+                Path backup = targetPath.resolveSibling(targetPath.getFileName() + ".bak." + Instant.now().toEpochMilli());
+                Files.copy(targetPath, backup, LinkOption.NOFOLLOW_LINKS);
+                backupPath = basePath.relativize(backup).toString();
             }
             
-            Files.createDirectories(targetPath.getParent());
-            Files.writeString(targetPath, params.content);
+            WorkspacePathGuard.createParentDirectories(project.rootPath(), targetPath);
+            Files.writeString(targetPath, params.content, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
             
             long size = Files.size(targetPath);
             String output = objectMapper.writeValueAsString(new WriteFileOutput(params.path, size, backupPath));
             
             return ToolResult.success("writeFile", output, System.currentTimeMillis() - start);
             
-        } catch (Exception e) {
+        } catch (WorkspacePathGuard.PathViolationException e) {
             return ToolResult.failure("writeFile", e.getMessage(), System.currentTimeMillis() - start);
+        } catch (Exception e) {
+            // Never echo exception text here: JDK I/O errors include absolute
+            // host paths, which must not be exposed to the model or API caller.
+            return ToolResult.failure("writeFile", "Unable to write file (" + e.getClass().getSimpleName() + ")",
+                System.currentTimeMillis() - start);
         }
     }
 

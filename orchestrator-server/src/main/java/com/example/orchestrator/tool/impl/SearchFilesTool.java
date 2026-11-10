@@ -4,6 +4,7 @@ import com.example.orchestrator.project.Project;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -75,11 +76,7 @@ public class SearchFilesTool implements Tool {
             SearchInput params = objectMapper.readValue(input, SearchInput.class);
             
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path searchPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-            
-            if (!searchPath.startsWith(basePath)) {
-                return ToolResult.failure("searchFiles", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path searchPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
             if (!Files.exists(searchPath)) {
                 return ToolResult.failure("searchFiles", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -92,6 +89,7 @@ public class SearchFilesTool implements Tool {
             List<SearchMatch> matches = new ArrayList<>();
             
             Files.walk(searchPath)
+                .filter(p -> !Files.isSymbolicLink(p))
                 .filter(Files::isRegularFile)
                 .filter(p -> shouldInclude(p, basePath))
                 .filter(p -> namePattern == null || namePattern.matcher(basePath.relativize(p).toString()).matches())
@@ -117,6 +115,8 @@ public class SearchFilesTool implements Tool {
             String output = objectMapper.writeValueAsString(new SearchOutput(matches));
             return ToolResult.success("searchFiles", output, System.currentTimeMillis() - start);
             
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("searchFiles", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("searchFiles", e.getMessage(), System.currentTimeMillis() - start);
         }

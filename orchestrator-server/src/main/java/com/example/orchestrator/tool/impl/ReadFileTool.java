@@ -4,6 +4,7 @@ import com.example.orchestrator.project.Project;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -59,12 +60,7 @@ public class ReadFileTool implements Tool {
                 return ToolResult.failure("readFile", "Path is required", System.currentTimeMillis() - start);
             }
             
-            Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path).normalize();
-            
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("readFile", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
             if (!Files.exists(targetPath) || !Files.isRegularFile(targetPath)) {
                 return ToolResult.failure("readFile", "File not found: " + params.path, System.currentTimeMillis() - start);
@@ -80,6 +76,8 @@ public class ReadFileTool implements Tool {
             
             return ToolResult.success("readFile", output, System.currentTimeMillis() - start);
             
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("readFile", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("readFile", e.getMessage(), System.currentTimeMillis() - start);
         }

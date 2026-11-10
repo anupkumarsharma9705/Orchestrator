@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -63,11 +64,7 @@ public class RunMavenBuildTool implements Tool {
             RunMavenBuildInput params = objectMapper.readValue(input, RunMavenBuildInput.class);
             
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-            
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("runMavenBuild", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("runMavenBuild", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -101,6 +98,8 @@ public class RunMavenBuildTool implements Tool {
                 ? ToolResult.success("runMavenBuild", result, System.currentTimeMillis() - start)
                 : ToolResult.failure("runMavenBuild", output, System.currentTimeMillis() - start);
             
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("runMavenBuild", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("runMavenBuild", e.getMessage(), System.currentTimeMillis() - start);
         }

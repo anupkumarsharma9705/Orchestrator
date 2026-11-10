@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -84,11 +85,7 @@ public class TrivyScanTool implements Tool {
             TrivyScanInput params = objectMapper.readValue(input, TrivyScanInput.class);
 
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("trivyScan", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("trivyScan", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -149,6 +146,8 @@ public class TrivyScanTool implements Tool {
                 command, basePath, workingDirectory, timeout);
             return toResult(sandboxResult, start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("trivyScan", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("trivyScan", e.getMessage(), System.currentTimeMillis() - start);
         }

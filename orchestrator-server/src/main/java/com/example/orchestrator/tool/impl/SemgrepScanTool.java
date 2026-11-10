@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -77,11 +78,7 @@ public class SemgrepScanTool implements Tool {
             SemgrepScanInput params = objectMapper.readValue(input, SemgrepScanInput.class);
 
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("semgrepScan", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("semgrepScan", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -132,6 +129,8 @@ public class SemgrepScanTool implements Tool {
                 ? ToolResult.success("semgrepScan", result, System.currentTimeMillis() - start)
                 : ToolResult.failure("semgrepScan", "Semgrep failed to execute: " + stdout + sandboxResult.stderr(), System.currentTimeMillis() - start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("semgrepScan", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("semgrepScan", e.getMessage(), System.currentTimeMillis() - start);
         }

@@ -6,10 +6,12 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.regex.Pattern;
 
@@ -66,12 +68,7 @@ public class DockerBuildTool implements Tool {
         try {
             DockerBuildInput params = objectMapper.readValue(input, DockerBuildInput.class);
 
-            Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("dockerBuild", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("dockerBuild", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -86,7 +83,8 @@ public class DockerBuildTool implements Tool {
             if (!dockerfilePath.startsWith(targetPath)) {
                 return ToolResult.failure("dockerBuild", "Dockerfile path traversal attempt denied", System.currentTimeMillis() - start);
             }
-            if (!Files.isRegularFile(dockerfilePath)) {
+            if (Files.isSymbolicLink(dockerfilePath)
+                    || !Files.isRegularFile(dockerfilePath, LinkOption.NOFOLLOW_LINKS)) {
                 return ToolResult.failure("dockerBuild", "Dockerfile not found: " + dockerfile, System.currentTimeMillis() - start);
             }
 
@@ -127,6 +125,8 @@ public class DockerBuildTool implements Tool {
                 ? ToolResult.success("dockerBuild", json, System.currentTimeMillis() - start)
                 : ToolResult.failure("dockerBuild", "Docker build failed: " + output, System.currentTimeMillis() - start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("dockerBuild", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("dockerBuild", e.getMessage(), System.currentTimeMillis() - start);
         }

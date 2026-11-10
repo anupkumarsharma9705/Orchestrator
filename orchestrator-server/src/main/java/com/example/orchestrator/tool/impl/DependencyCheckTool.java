@@ -6,6 +6,7 @@ import com.example.orchestrator.sandbox.SandboxService;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
@@ -73,11 +74,7 @@ public class DependencyCheckTool implements Tool {
             DependencyCheckInput params = objectMapper.readValue(input, DependencyCheckInput.class);
 
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("dependencyCheck", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
 
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("dependencyCheck", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -127,6 +124,8 @@ public class DependencyCheckTool implements Tool {
                 ? ToolResult.success("dependencyCheck", result, System.currentTimeMillis() - start)
                 : ToolResult.failure("dependencyCheck", "Dependency-Check failed to execute: " + stdout, System.currentTimeMillis() - start);
 
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("dependencyCheck", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("dependencyCheck", e.getMessage(), System.currentTimeMillis() - start);
         }

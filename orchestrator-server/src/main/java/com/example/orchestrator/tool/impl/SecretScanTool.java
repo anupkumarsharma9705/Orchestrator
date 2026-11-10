@@ -4,6 +4,7 @@ import com.example.orchestrator.project.Project;
 import com.example.orchestrator.tool.Tool;
 import com.example.orchestrator.tool.ToolResult;
 import com.example.orchestrator.tool.ToolSpec;
+import com.example.orchestrator.tool.WorkspacePathGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,11 +108,7 @@ public class SecretScanTool implements Tool {
             SecretScanInput params = objectMapper.readValue(input, SecretScanInput.class);
             
             Path basePath = project.rootPath().toAbsolutePath().normalize();
-            Path targetPath = basePath.resolve(params.path != null ? params.path : ".").normalize();
-            
-            if (!targetPath.startsWith(basePath)) {
-                return ToolResult.failure("secretScan", "Path traversal attempt denied", System.currentTimeMillis() - start);
-            }
+            Path targetPath = WorkspacePathGuard.resolve(project.rootPath(), params.path);
             
             if (!Files.exists(targetPath)) {
                 return ToolResult.failure("secretScan", "Path not found: " + params.path, System.currentTimeMillis() - start);
@@ -123,6 +120,7 @@ public class SecretScanTool implements Tool {
             
             // Scan files
             Files.walk(targetPath)
+                .filter(p -> !Files.isSymbolicLink(p))
                 .filter(Files::isRegularFile)
                 .filter(p -> !shouldExclude(p, targetPath))
                 .filter(p -> {
@@ -143,6 +141,8 @@ public class SecretScanTool implements Tool {
             
             return ToolResult.success("secretScan", output, System.currentTimeMillis() - start);
             
+        } catch (WorkspacePathGuard.PathViolationException e) {
+            return ToolResult.failure("secretScan", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             return ToolResult.failure("secretScan", e.getMessage(), System.currentTimeMillis() - start);
         }
